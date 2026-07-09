@@ -1,0 +1,22 @@
+[workspace]
+resolver = "3"
+members = [
+    "atlas-core",
+    "atlas-space",
+    "atlas-render",
+    "atlas-config",
+    "atlas-input",
+    "atlas-output",
+    "atlas-animation",
+    "atlas-layout",
+    "atlas-wm",
+    "atlas-ipc",
+    "atlas-plugin-api",
+    "atlas-plugin",
+    "compositor",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"

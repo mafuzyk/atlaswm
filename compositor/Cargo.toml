@@ -1,0 +1,11 @@
+[package]
+name = "compositor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+atlas-core = { path = "../atlas-core" }
+atlas-space = { path = "../atlas-space" }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
