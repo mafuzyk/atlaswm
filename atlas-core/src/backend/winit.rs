@@ -5,13 +5,13 @@ use smithay::{
     backend::{
         input::{InputEvent, KeyboardKeyEvent},
         renderer::{
-            element::surface::{WaylandSurfaceRenderElement, render_elements_from_surface_tree},
+            element::solid::SolidColorRenderElement,
             gles::GlesRenderer,
-            utils::draw_render_elements,
-            Color32F, Frame, Renderer,
+            Color32F,
         },
         winit::{self, WinitEvent},
     },
+    desktop::space::render_output,
     input::keyboard::FilterResult,
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
@@ -19,38 +19,14 @@ use smithay::{
         wayland_server::Display,
         winit::event_loop::pump_events::PumpStatus,
     },
-    utils::{Rectangle, Transform},
+    utils::Transform,
     wayland::{
-        compositor::{SurfaceAttributes, TraversalAction, with_surface_tree_downward},
         socket::ListeningSocketSource,
     },
 };
 use tracing::{error, info, warn};
 
 use crate::state::{AtlasState, ClientState};
-
-fn send_frames_surface_tree(
-    surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
-    time: u32,
-) {
-    with_surface_tree_downward(
-        surface,
-        (),
-        |_, _, &()| TraversalAction::DoChildren(()),
-        |_surf, states, &()| {
-            for callback in states
-                .cached_state
-                .get::<SurfaceAttributes>()
-                .current()
-                .frame_callbacks
-                .drain(..)
-            {
-                callback.done(time);
-            }
-        },
-        |_, _, &()| true,
-    );
-}
 
 pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
     let mut event_loop: EventLoop<AtlasState> = EventLoop::try_new()?;
@@ -90,6 +66,8 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
     );
     output.set_preferred(mode);
 
+    let damage_tracker = smithay::backend::renderer::damage::OutputDamageTracker::from_output(&output);
+
     let xdg_shell_state = smithay::wayland::shell::xdg::XdgShellState::new::<AtlasState>(&dh);
 
     let socket_source = ListeningSocketSource::new_auto()?;
@@ -118,6 +96,9 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
         },
     )?;
 
+    let mut space = smithay::desktop::Space::default();
+    space.map_output(&output, (0, 0));
+
     let mut state = AtlasState {
         display_handle: dh.clone(),
         compositor_state,
@@ -128,6 +109,8 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
         seat,
         output,
         socket_name,
+        space,
+        damage_tracker,
         running: true,
     };
 
@@ -139,6 +122,7 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|e| format!("Failed to initialize keyboard: {}", e))?;
 
     let start_time = std::time::Instant::now();
+    let mut full_redraw: u8 = 4;
 
     while state.running {
         let status = winit.dispatch_new_events(|event| match event {
@@ -186,10 +170,19 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        let size = backend.window_size();
-        let damage = Rectangle::from_size(size);
+        state.space.refresh();
 
-        {
+        let age = if full_redraw > 0 {
+            full_redraw -= 1;
+            0
+        } else {
+            backend.buffer_age().unwrap_or(0)
+        };
+
+        let clear_color = Color32F::new(0.1, 0.0, 0.0, 1.0);
+
+        // Rendering scope: framebuffer holds a borrow on backend
+        let (damage_to_submit, frame_time) = {
             let (renderer, mut framebuffer) = match backend.bind() {
                 Ok(ret) => ret,
                 Err(err) => {
@@ -198,46 +191,53 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
-            let elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> = state
-                .xdg_shell_state
-                .toplevel_surfaces()
-                .iter()
-                .flat_map(|surface| {
-                    render_elements_from_surface_tree(
-                        renderer,
-                        surface.wl_surface(),
-                        (0, 0),
-                        1.0,
-                        1.0,
-                        smithay::backend::renderer::element::Kind::Unspecified,
-                    )
-                })
-                .collect();
+            let custom_elements: &[SolidColorRenderElement] = &[];
 
-            let mut frame = renderer
-                .render(&mut framebuffer, size, Transform::Flipped180)
-                .map_err(|e| format!("Render error: {}", e))?;
+            let result = render_output(
+                &state.output,
+                renderer,
+                &mut framebuffer,
+                1.0,
+                age,
+                std::slice::from_ref(&state.space),
+                custom_elements,
+                &mut state.damage_tracker,
+                clear_color,
+            );
 
-            frame
-                .clear(Color32F::new(0.1, 0.0, 0.0, 1.0), &[damage])
-                .map_err(|e| format!("Clear error: {}", e))?;
+            let frame_time = start_time.elapsed();
 
-            draw_render_elements(&mut frame, 1.0, &elements, &[damage])
-                .map_err(|e| format!("Draw error: {}", e))?;
+            match result {
+                Ok(render_output_result) => {
+                    (render_output_result.damage.cloned(), frame_time)
+                }
+                Err(err) => {
+                    warn!("Rendering error: {:?}", err);
+                    (None, frame_time)
+                }
+            }
+        }; // Drop framebuffer/renderer → backend borrow released
 
-            let _ = frame.finish().map_err(|e| format!("Finish error: {}", e))?;
-
-            for surface in state.xdg_shell_state.toplevel_surfaces() {
-                send_frames_surface_tree(
-                    surface.wl_surface(),
-                    start_time.elapsed().as_millis() as u32,
-                );
+        if let Some(ref damage) = damage_to_submit {
+            if !damage.is_empty() {
+                if let Err(err) = backend.submit(Some(damage)) {
+                    warn!("Failed to submit buffer: {}", err);
+                }
             }
         }
 
-        backend
-            .submit(Some(&[damage]))
-            .map_err(|e| format!("Submit error: {}", e))?;
+        // Send frame events to clients
+        let output_for_frames = state.output.clone();
+        for window in state.space.elements() {
+            if state.space.outputs_for_element(window).contains(&output_for_frames) {
+                window.send_frame(
+                    &output_for_frames,
+                    frame_time,
+                    None,
+                    |_, _| Some(output_for_frames.clone()),
+                );
+            }
+        }
 
         let result = event_loop.dispatch(Some(Duration::from_millis(1)), &mut state);
         if result.is_err() {

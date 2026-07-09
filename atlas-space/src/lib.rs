@@ -44,6 +44,12 @@ pub struct GlobalSpace {
     next_id: u64,
 }
 
+impl Default for GlobalSpace {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GlobalSpace {
     pub fn new() -> Self {
         GlobalSpace {

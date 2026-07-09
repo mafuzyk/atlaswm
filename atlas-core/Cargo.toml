@@ -9,5 +9,6 @@ smithay = { path = "/tmp/opencode/smithay", features = [
     "backend_winit",
     "wayland_frontend",
     "renderer_gl",
+    "desktop",
 ] }
 tracing = "0.1"

@@ -3,6 +3,12 @@ use std::path::Path;
 use knuffel::{Decode, parse};
 use thiserror::Error;
 
+/// Validate that the `kdl` crate compiles and can be used for low-level KDL parsing.
+/// This is kept minimal — knuffel is our primary parser for derive-based config loading.
+pub fn parse_kdl_document(input: &str) -> Result<Vec<kdl::KdlNode>, kdl::KdlError> {
+    kdl::parse_document(input)
+}
+
 // ─── Error ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Error)]

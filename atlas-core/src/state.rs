@@ -1,11 +1,12 @@
 use smithay::{
+    backend::renderer::damage::OutputDamageTracker,
+    desktop::{Space, Window},
     input::{
         Seat, SeatHandler, SeatState,
         pointer::CursorImageStatus,
     },
     output::Output,
     reexports::{
-        wayland_protocols::xdg::shell::server::xdg_toplevel,
         wayland_server::{
             Client, DisplayHandle,
             backend::{ClientData, ClientId, DisconnectReason},
@@ -49,6 +50,8 @@ pub struct AtlasState {
     pub seat: Seat<AtlasState>,
     pub output: Output,
     pub socket_name: String,
+    pub space: Space<Window>,
+    pub damage_tracker: OutputDamageTracker,
     pub running: bool,
 }
 
@@ -62,10 +65,8 @@ impl XdgShellHandler for AtlasState {
     }
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
-        surface.with_pending_state(|state| {
-            state.states.set(xdg_toplevel::State::Activated);
-        });
-        surface.send_configure();
+        let window = Window::new_wayland_window(surface);
+        self.space.map_element(window, (100, 100), true);
     }
 
     fn new_popup(&mut self, _surface: PopupSurface, _positioner: PositionerState) {}

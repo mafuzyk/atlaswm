@@ -7,5 +7,6 @@ license.workspace = true
 [dependencies]
 atlas-core = { path = "../atlas-core" }
 atlas-space = { path = "../atlas-space" }
+atlas-config = { path = "../atlas-config" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
