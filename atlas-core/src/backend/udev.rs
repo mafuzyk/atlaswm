@@ -56,7 +56,7 @@ use smithay_drm_extras::drm_scanner::{DrmScanEvent, DrmScanner};
 use tracing::{debug, error, info, warn};
 use calloop::signals::{Signal, Signals};
 
-use atlas_config::DecorationConfig;
+use atlas_config::RuntimeConfig;
 use crate::state::{AtlasState, ClientState};
 use crate::backend::winit;
 
@@ -102,7 +102,7 @@ use smithay::backend::drm::DrmNode;
 
 // ────── Entry point ────────────────────────────────────────────────
 
-pub fn run_udev(deco_config: Option<DecorationConfig>) {
+pub fn run_udev(config: RuntimeConfig) {
     let mut event_loop: EventLoop<UdevState> = match EventLoop::try_new() {
         Ok(el) => el,
         Err(e) => { error!("event loop: {e}"); return; }
@@ -174,6 +174,7 @@ pub fn run_udev(deco_config: Option<DecorationConfig>) {
         Err(e) => { error!("wayland socket: {e}"); return; }
     };
     let sock_name = sock.socket_name().to_string_lossy().into_owned();
+    std::env::set_var("WAYLAND_DISPLAY", &sock_name);
     info!(name = %sock_name, "Wayland socket listening");
 
     // ── Udev ───────────────────────────────────────────────────
@@ -192,7 +193,6 @@ pub fn run_udev(deco_config: Option<DecorationConfig>) {
     info!("libinput context ready");
 
     // ── AtlasState ─────────────────────────────────────────────
-    let deco = deco_config.unwrap_or_default();
     let placeholder = Output::new(
         "placeholder".into(),
         PhysicalProperties {
@@ -219,7 +219,7 @@ pub fn run_udev(deco_config: Option<DecorationConfig>) {
         damage_tracker: smithay::backend::renderer::damage::OutputDamageTracker::new(
             (0, 0), 1.0, Transform::Normal,
         ),
-        deco_config: deco,
+        config,
         global_space: atlas_space::GlobalSpace::new(),
         viewport: atlas_space::Viewport::new("udev"),
         windows: HashMap::new(),
@@ -656,7 +656,7 @@ impl UdevState {
         ));
 
         match d.drm_output.render_frame(
-            &mut renderer, &elements, Color32F::new(0.15, 0.15, 0.35, 1.0), FrameFlags::empty(),
+            &mut renderer, &elements, winit::hex_to_color32f(&self.atlas.config.canvas.background_color), FrameFlags::empty(),
         ) {
             Ok(_) => {
                 let user_data = Some(OutputPresentationFeedback::new(&d.output));
@@ -710,10 +710,16 @@ impl UdevState {
                 let dx = event.delta_x();
                 let dy = event.delta_y();
                 debug!(dx, dy, pos_before = ?current, "PointerMotion event");
-                let new_phys = Point::<f64, Physical>::from((
-                    current.x + dx,
-                    current.y + dy,
-                ));
+                
+                let mut new_x = current.x + dx;
+                let mut new_y = current.y + dy;
+                
+                if let Some(mode) = self.atlas.output.current_mode() {
+                    new_x = new_x.clamp(0.0, mode.size.w as f64);
+                    new_y = new_y.clamp(0.0, mode.size.h as f64);
+                }
+                
+                let new_phys = Point::<f64, Physical>::from((new_x, new_y));
                 let logical = Point::<f64, Logical>::from((new_phys.x, new_phys.y));
                 winit::handle_motion_event(&mut self.atlas, &pt, new_phys, logical);
             }

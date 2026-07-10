@@ -8,4 +8,3 @@ license.workspace = true
 knuffel = "3"
 kdl = "3"
 thiserror = "2"
-miette = { version = "5", features = ["fancy"] }

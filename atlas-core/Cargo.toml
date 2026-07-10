@@ -7,19 +7,7 @@ license.workspace = true
 [dependencies]
 atlas-config = { path = "../atlas-config" }
 atlas-space = { path = "../atlas-space" }
-smithay = { path = "/home/charlie/smithay", features = [
-    "backend_winit",
-    "backend_drm",
-    "backend_gbm",
-    "backend_egl",
-    "backend_libinput",
-    "backend_udev",
-    "backend_session_libseat",
-    "wayland_frontend",
-    "renderer_gl",
-    "renderer_multi",
-    "desktop",
-] }
-smithay-drm-extras = { path = "/home/charlie/smithay/smithay-drm-extras" }
+smithay = { git = "https://github.com/Smithay/smithay", rev = "3021f619e2ae4dab8bfb1e21f3f210923b9b6582", default-features = false, features = ["backend_drm", "backend_gbm", "backend_libinput", "backend_udev", "backend_winit", "backend_egl", "backend_x11", "renderer_gl", "renderer_multi", "wayland_frontend", "xwayland", "desktop", "backend_session_libseat"] }
+smithay-drm-extras = { git = "https://github.com/Smithay/smithay", rev = "3021f619e2ae4dab8bfb1e21f3f210923b9b6582" }
 tracing = "0.1"
 calloop = { version = "0.14", features = ["signals"] }

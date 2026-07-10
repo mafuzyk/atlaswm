@@ -36,7 +36,7 @@ use smithay::{
 };
 use tracing::{error, info, warn};
 
-use atlas_config::DecorationConfig;
+use atlas_config::RuntimeConfig;
 use atlas_space::{GlobalSpace, Size as GsSize, Point as GsPoint, Viewport};
 
 use crate::state::{AtlasState, ClientState, GrabState, GrabKind};
@@ -101,11 +101,7 @@ fn surface_from_window(window: &Window) -> Option<smithay::reexports::wayland_se
 
 fn find_gid(state: &AtlasState, window: &Window) -> Option<u64> {
     state.windows.iter().find_map(|(gid, w)| {
-        if std::ptr::eq(w as *const Window, window as *const Window) {
-            Some(*gid)
-        } else {
-            None
-        }
+        if w == window { Some(*gid) } else { None }
     })
 }
 
@@ -123,9 +119,9 @@ pub fn build_border_elements(
     state: &AtlasState,
 ) -> Vec<SolidColorRenderElement> {
     let mut elements = Vec::new();
-    let border = state.deco_config.border_width;
-    let focused = hex_to_color32f(&state.deco_config.active_color);
-    let unfocused = hex_to_color32f(&state.deco_config.inactive_color);
+    let border = state.config.decoration.border_width;
+    let focused = hex_to_color32f(&state.config.decoration.active_color);
+    let unfocused = hex_to_color32f(&state.config.decoration.inactive_color);
 
     for (gid, window) in &state.windows {
         if let Some(geo) = state.space.element_geometry(window) {
@@ -191,7 +187,7 @@ pub fn prune_layer_surfaces(state: &mut AtlasState) {
 /// ── Keyboard ─────────────────────────────────────────────────────
 
 pub fn spawn_terminal() {
-    for cmd in &["fish", "gnome-terminal", "alacritty", "kitty", "foot", "weston-terminal"] {
+    for cmd in &["alacritty", "kitty", "foot", "gnome-terminal", "weston-terminal"] {
         if std::process::Command::new("which")
             .arg(cmd)
             .stdout(std::process::Stdio::null())
@@ -272,7 +268,7 @@ pub fn handle_keyboard_event<B: InputBackend>(
     }
 
     keyboard.input::<(), _>(
-        state, event.key_code(), event.state(), 0.into(), 0,
+        state, event.key_code(), event.state(), smithay::utils::SERIAL_COUNTER.next_serial().into(), 0,
         |_, _, _| FilterResult::Forward,
     );
 }
@@ -407,7 +403,7 @@ pub fn handle_button_event(
             let window_id = find_gid(state, window);
             state.focused_gid = window_id;
             if let Some(surface) = surface_from_window(window) {
-                keyboard.set_focus(state, Some(surface), 0.into());
+                keyboard.set_focus(state, Some(surface), smithay::utils::SERIAL_COUNTER.next_serial().into());
             }
             if let Some(gid) = window_id {
                 if let Some(w) = state.windows.get(&gid) {
@@ -425,7 +421,7 @@ pub fn handle_button_event(
 
 /// ── Main loop ────────────────────────────────────────────────────
 
-pub fn run_winit(deco_config: Option<DecorationConfig>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run_winit(config: RuntimeConfig) -> Result<(), Box<dyn std::error::Error>> {
     let mut event_loop: EventLoop<AtlasState> = EventLoop::try_new()?;
     let display: Display<AtlasState> = Display::new()?;
     let dh = display.handle();
@@ -468,6 +464,7 @@ pub fn run_winit(deco_config: Option<DecorationConfig>) -> Result<(), Box<dyn st
 
     let socket_source = ListeningSocketSource::new_auto()?;
     let socket_name = socket_source.socket_name().to_string_lossy().into_owned();
+    std::env::set_var("WAYLAND_DISPLAY", &socket_name);
     info!(name = socket_name, "Listening on wayland socket");
 
     event_loop.handle().insert_source(
@@ -507,7 +504,7 @@ pub fn run_winit(deco_config: Option<DecorationConfig>) -> Result<(), Box<dyn st
         socket_name,
         space,
         damage_tracker,
-        deco_config: deco_config.unwrap_or_default(),
+        config,
         global_space,
         viewport,
         windows: std::collections::HashMap::new(),
@@ -599,7 +596,7 @@ pub fn run_winit(deco_config: Option<DecorationConfig>) -> Result<(), Box<dyn st
                 std::slice::from_ref(&state.space),
                 &border_elements,
                 &mut state.damage_tracker,
-                Color32F::new(0.1, 0.0, 0.0, 1.0),
+                hex_to_color32f(&state.config.canvas.background_color),
             );
 
             let frame_time = start_time.elapsed();

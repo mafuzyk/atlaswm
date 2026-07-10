@@ -41,7 +41,7 @@ use smithay::{
     },
 };
 
-use atlas_config::DecorationConfig;
+use atlas_config::RuntimeConfig;
 use atlas_space::{GlobalSpace, Viewport, Size as GsSize, Point as GsPoint};
 
 #[derive(Default)]
@@ -80,7 +80,7 @@ pub struct AtlasState {
     pub socket_name: String,
     pub space: Space<Window>,
     pub damage_tracker: OutputDamageTracker,
-    pub deco_config: DecorationConfig,
+    pub config: RuntimeConfig,
     pub global_space: GlobalSpace,
     pub viewport: Viewport,
     pub windows: HashMap<u64, Window>,
@@ -129,7 +129,24 @@ impl XdgShellHandler for AtlasState {
         };
 
         let gid = self.global_space.add_window(pos, default_win_size, None);
-        self.windows.insert(gid, window);
+        self.windows.insert(gid, window.clone());
+        
+        // Auto-focus the new window
+        self.focused_gid = Some(gid);
+        if let Some(keyboard) = self.seat.get_keyboard() {
+            if let Some(surface) = window.toplevel().map(|t| t.wl_surface().clone()) {
+                self.serial_counter += 1;
+                keyboard.set_focus(self, Some(surface), self.serial_counter.into());
+            }
+        }
+        
+        // Tell the client what size it should be and that it can begin drawing
+        if let Some(toplevel) = window.toplevel() {
+            toplevel.with_pending_state(|state| {
+                state.size = Some(smithay::utils::Size::from((default_win_size.width as i32, default_win_size.height as i32)));
+            });
+            toplevel.send_configure();
+        }
     }
 
     fn new_popup(&mut self, _surface: PopupSurface, _positioner: PositionerState) {}
@@ -176,7 +193,9 @@ impl WlrLayerShellHandler for AtlasState {
         surface.send_configure();
         let dlayer = LayerSurface::new(surface, namespace);
         let mut map = layer_map_for_output(&output);
-        map.map_layer(&dlayer).unwrap();
+        if let Err(e) = map.map_layer(&dlayer) {
+            tracing::warn!("Failed to map layer: {:?}", e);
+        }
         self.layer_surfaces.push(dlayer);
     }
 

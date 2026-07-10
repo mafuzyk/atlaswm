@@ -22,7 +22,7 @@ fn main() {
     }).unwrap_or_else(|| "winit".into());
 
     let config_path = Path::new("atlas.kdl");
-    let deco_config = if config_path.exists() {
+    let runtime_config = if config_path.exists() {
         match parse_config(config_path) {
             Ok(cfg) => {
                 tracing::info!(
@@ -36,26 +36,26 @@ fn main() {
                     cfg.regions.len(),
                     cfg.bindings.len(),
                 );
-                Some(cfg.decoration)
+                cfg
             }
             Err(e) => {
                 tracing::warn!("Failed to parse atlas.kdl: {e}, using defaults");
-                None
+                atlas_config::RuntimeConfig::default()
             }
         }
     } else {
         tracing::info!("No atlas.kdl found, using default config");
-        None
+        atlas_config::RuntimeConfig::default()
     };
 
     match backend.as_str() {
         "udev" | "tty-udev" => {
             tracing::info!("Starting Atlas with udev/DRM backend");
-            udev::run_udev(deco_config);
+            udev::run_udev(runtime_config);
         }
         _ => {
             tracing::info!("Starting Atlas with winit backend");
-            if let Err(e) = winit::run_winit(deco_config) {
+            if let Err(e) = winit::run_winit(runtime_config) {
                 tracing::error!("Compositor exited with error: {}", e);
             }
         }

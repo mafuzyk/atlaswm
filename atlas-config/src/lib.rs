@@ -285,6 +285,21 @@ impl Default for AnimationConfig {
     }
 }
 
+impl Default for RuntimeConfig {
+    fn default() -> Self {
+        RuntimeConfig {
+            canvas: CanvasConfig::default(),
+            decoration: DecorationConfig::default(),
+            outputs: Vec::new(),
+            regions: Vec::new(),
+            bindings: Vec::new(),
+            animation: AnimationConfig::default(),
+            plugins: Vec::new(),
+            bookmarks: Vec::new(),
+        }
+    }
+}
+
 // ─── Parse ────────────────────────────────────────────────────────────
 
 pub fn parse_config<P: AsRef<Path>>(path: P) -> Result<RuntimeConfig, ConfigError> {
