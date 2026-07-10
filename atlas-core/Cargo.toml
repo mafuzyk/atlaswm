@@ -9,8 +9,16 @@ atlas-config = { path = "../atlas-config" }
 atlas-space = { path = "../atlas-space" }
 smithay = { path = "/tmp/opencode/smithay", features = [
     "backend_winit",
+    "backend_drm",
+    "backend_gbm",
+    "backend_egl",
+    "backend_libinput",
+    "backend_udev",
+    "backend_session_libseat",
     "wayland_frontend",
     "renderer_gl",
+    "renderer_multi",
     "desktop",
 ] }
+smithay-drm-extras = { path = "/tmp/opencode/smithay/smithay-drm-extras" }
 tracing = "0.1"

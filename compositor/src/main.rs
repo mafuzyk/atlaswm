@@ -1,7 +1,8 @@
 use std::path::Path;
+use std::env;
 
 use atlas_config::parse_config;
-use atlas_core::backend::winit;
+use atlas_core::backend::{winit, udev};
 
 fn main() {
     if let Ok(env_filter) = tracing_subscriber::EnvFilter::try_from_default_env() {
@@ -11,6 +12,14 @@ fn main() {
     } else {
         tracing_subscriber::fmt().init();
     }
+
+    let args: Vec<String> = env::args().collect();
+    let backend = args.iter().find_map(|a| {
+        if a.starts_with("--backend=") { Some(a.trim_start_matches("--backend=").to_string()) }
+        else if a == "--winit" { Some("winit".into()) }
+        else if a == "--tty-udev" { Some("udev".into()) }
+        else { None }
+    }).unwrap_or_else(|| "winit".into());
 
     let config_path = Path::new("atlas.kdl");
     let deco_config = if config_path.exists() {
@@ -39,7 +48,16 @@ fn main() {
         None
     };
 
-    if let Err(e) = winit::run_winit(deco_config) {
-        tracing::error!("Compositor exited with error: {}", e);
+    match backend.as_str() {
+        "udev" | "tty-udev" => {
+            tracing::info!("Starting Atlas with udev/DRM backend");
+            udev::run_udev(deco_config);
+        }
+        _ => {
+            tracing::info!("Starting Atlas with winit backend");
+            if let Err(e) = winit::run_winit(deco_config) {
+                tracing::error!("Compositor exited with error: {}", e);
+            }
+        }
     }
 }

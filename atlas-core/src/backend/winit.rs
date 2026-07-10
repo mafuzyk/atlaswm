@@ -4,7 +4,7 @@ use std::time::Duration;
 use smithay::{
     backend::{
         input::{
-            AbsolutePositionEvent, ButtonState, InputEvent, KeyboardKeyEvent,
+            AbsolutePositionEvent, ButtonState, InputBackend, InputEvent, KeyboardKeyEvent,
             PointerButtonEvent,
         },
         renderer::{
@@ -51,7 +51,7 @@ const MIN_WIN_SIZE: f64 = 100.0;
 
 /// ── Spatial helpers ──────────────────────────────────────────────
 
-fn sync_space_with_viewport(
+pub fn sync_space_with_viewport(
     state: &mut AtlasState,
     screen_size: smithay::utils::Size<i32, smithay::utils::Physical>,
 ) {
@@ -109,7 +109,7 @@ fn find_gid(state: &AtlasState, window: &Window) -> Option<u64> {
     })
 }
 
-fn hex_to_color32f(hex: &str) -> Color32F {
+pub fn hex_to_color32f(hex: &str) -> Color32F {
     let hex = hex.trim_start_matches('#');
     let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(0) as f32 / 255.0;
     let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(0) as f32 / 255.0;
@@ -119,7 +119,7 @@ fn hex_to_color32f(hex: &str) -> Color32F {
 
 /// Build border `SolidColorRenderElement`s for every window currently
 /// mapped in the Smithay Space.
-fn build_border_elements(
+pub fn build_border_elements(
     state: &AtlasState,
 ) -> Vec<SolidColorRenderElement> {
     let mut elements = Vec::new();
@@ -173,7 +173,7 @@ fn build_border_elements(
 }
 
 /// Truncate dead layer surfaces from the list and unmap from the output's LayerMap.
-fn prune_layer_surfaces(state: &mut AtlasState) {
+pub fn prune_layer_surfaces(state: &mut AtlasState) {
     let outputs: Vec<_> = state.space.outputs().cloned().collect();
     state.layer_surfaces.retain(|s| {
         if !s.alive() {
@@ -190,7 +190,7 @@ fn prune_layer_surfaces(state: &mut AtlasState) {
 
 /// ── Keyboard ─────────────────────────────────────────────────────
 
-fn spawn_terminal() {
+pub fn spawn_terminal() {
     for cmd in &["fish", "gnome-terminal", "alacritty", "kitty", "foot", "weston-terminal"] {
         if std::process::Command::new("which")
             .arg(cmd)
@@ -211,9 +211,9 @@ fn spawn_terminal() {
         .map(|_| info!("Spawned xterm"));
 }
 
-fn handle_keyboard_event(
+pub fn handle_keyboard_event<B: InputBackend>(
     state: &mut AtlasState,
-    event: &impl KeyboardKeyEvent<smithay::backend::winit::WinitInput>,
+    event: &impl KeyboardKeyEvent<B>,
     keyboard: &smithay::input::keyboard::KeyboardHandle<AtlasState>,
 ) {
     let pressed = event.state() == smithay::backend::input::KeyState::Pressed;
@@ -278,7 +278,7 @@ fn handle_keyboard_event(
 
 /// ── Pointer motion ───────────────────────────────────────────────
 
-fn handle_motion_event(
+pub fn handle_motion_event(
     state: &mut AtlasState,
     pointer: &PointerHandle<AtlasState>,
     phys: Point<f64, Physical>,
@@ -337,7 +337,7 @@ fn handle_motion_event(
 
 /// ── Pointer button ───────────────────────────────────────────────
 
-fn handle_button_event(
+pub fn handle_button_event(
     state: &mut AtlasState,
     pointer: &PointerHandle<AtlasState>,
     keyboard: &smithay::input::keyboard::KeyboardHandle<AtlasState>,
