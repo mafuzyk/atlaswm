@@ -1,11 +1,43 @@
 # Atlas
 
-A spatial Wayland compositor built with [Smithay](https://github.com/Smithay/smithay).
+![Rust Version](https://img.shields.io/badge/rust-2021-blue)
+![License](https://img.shields.io/badge/license-GPL--3.0-blue)
+![Status](https://img.shields.io/badge/status-pre--alpha-orange)
+[![Build](https://github.com/mafuzyk/atlaswm/actions/workflows/ci.yml/badge.svg)](https://github.com/mafuzyk/atlaswm/actions/workflows/ci.yml)
 
-Atlas treats your desktop as an infinite canvas: windows live in a shared
+A spatial Wayland compositor built with [Smithay](https://github.com/Smithay/smithay) and Rust.
+
+Atlas treats your desktop as an **infinite canvas**: windows live in a shared
 coordinate space that you can pan and zoom, rather than being confined to
-physical monitor boundaries.  It is **pre-alpha** — the architecture is
-being proven out crate by crate.
+physical monitor boundaries. Every pixel is tracked, every allocation is
+accounted for — we're building an architecture that is as robust as it is
+expansive, with zero memory leaks and full type safety from the ground up.
+
+![Screenshot]()
+
+> **Pre-alpha** — the architecture is being proven out crate by crate. The
+> compositor is functional on the winit backend for safe testing inside your
+> existing desktop session.
+
+---
+
+## Quick Start / Como Testar
+
+```bash
+# Clone the repository
+git clone https://github.com/mafuzyk/atlaswm.git
+cd atlaswm
+
+# Build and run with the winit backend (safe, runs as a window)
+RUST_LOG=info cargo run -p compositor
+```
+
+**Winit backend (default):** Atlas opens as an ordinary window within your
+current desktop session — no TTY switch, no DRM takeover, no risk of locking
+yourself out. This is the recommended way to experiment right now. A DRM/udev
+backend is under development for native TTY operation.
+
+---
 
 ## Architecture
 
@@ -64,13 +96,21 @@ cargo build -p compositor
 RUST_LOG=info cargo run -p compositor
 ```
 
-**Dependencies:** Rust 2021 edition, the standard Smithay build dependencies
-(libwayland, libxkbcommon, libgl, libseat, udev).  On a typical Debian/Ubuntu
-system:
+**Dependencies** — Rust 2021 edition, the standard Smithay build dependencies
+(libwayland, libxkbcommon, libgl, libseat, udev).
+
+#### Debian / Ubuntu
 
 ```bash
 sudo apt install build-essential pkg-config libwayland-dev libxkbcommon-dev \
   libegl1-mesa-dev libgles2-mesa-dev libseat-dev libudev-dev
+```
+
+#### Arch Linux
+
+```bash
+sudo pacman -S base-devel pkgconf wayland wayland-protocols libxkbcommon \
+  mesa libegl libglvnd seatd udev
 ```
 
 ### Creating `atlas.kdl`
