@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+atlas-config = { path = "../atlas-config" }
 atlas-space = { path = "../atlas-space" }
 smithay = { path = "/tmp/opencode/smithay", features = [
     "backend_winit",

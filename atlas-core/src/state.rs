@@ -4,7 +4,7 @@ use tracing::info;
 
 use smithay::{
     backend::renderer::damage::OutputDamageTracker,
-    desktop::{Space, Window},
+    desktop::{Space, Window, LayerSurface, layer_map_for_output},
     input::{
         Seat, SeatHandler, SeatState,
         pointer::CursorImageStatus,
@@ -31,13 +31,17 @@ use smithay::{
         },
         shell::{
             kde::decoration::{KdeDecorationHandler, KdeDecorationState},
-            wlr_layer::{WlrLayerShellHandler, WlrLayerShellState, LayerSurface, Layer},
+            wlr_layer::{
+                WlrLayerShellHandler, WlrLayerShellState,
+                LayerSurface as WlrLayerSurface, Layer,
+            },
             xdg::{PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState},
         },
         shm::{ShmHandler, ShmState},
     },
 };
 
+use atlas_config::DecorationConfig;
 use atlas_space::{GlobalSpace, Viewport, Size as GsSize, Point as GsPoint};
 
 #[derive(Default)]
@@ -76,6 +80,7 @@ pub struct AtlasState {
     pub socket_name: String,
     pub space: Space<Window>,
     pub damage_tracker: OutputDamageTracker,
+    pub deco_config: DecorationConfig,
     pub global_space: GlobalSpace,
     pub viewport: Viewport,
     pub windows: HashMap<u64, Window>,
@@ -156,15 +161,34 @@ impl WlrLayerShellHandler for AtlasState {
 
     fn new_layer_surface(
         &mut self,
-        surface: LayerSurface,
-        _output: Option<wl_output::WlOutput>,
+        surface: WlrLayerSurface,
+        wl_output: Option<wl_output::WlOutput>,
         layer: Layer,
         namespace: String,
     ) {
         info!(namespace, layer = ?layer, "New layer surface");
-        // Send initial configure so the client commits its first buffer.
+        let output = wl_output
+            .as_ref()
+            .and_then(Output::from_resource)
+            .unwrap_or_else(|| self.output.clone());
+        // Must send configure before consuming surface into desktop::LayerSurface
         surface.send_configure();
-        self.layer_surfaces.push(surface);
+        let dlayer = LayerSurface::new(surface, namespace);
+        let mut map = layer_map_for_output(&output);
+        map.map_layer(&dlayer).unwrap();
+        self.layer_surfaces.push(dlayer);
+    }
+
+    fn layer_destroyed(&mut self, surface: WlrLayerSurface) {
+        info!("Layer surface destroyed");
+        self.layer_surfaces.retain(|l| l.layer_surface() != &surface);
+        if let Some((mut map, layer)) = self.space.outputs().find_map(|o| {
+            let map = layer_map_for_output(o);
+            let layer = map.layers().find(|l| l.layer_surface() == &surface).cloned();
+            layer.map(|layer| (map, layer))
+        }) {
+            map.unmap_layer(&layer);
+        }
     }
 }
 

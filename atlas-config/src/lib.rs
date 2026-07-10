@@ -37,6 +37,9 @@ pub struct KdlConfig {
     pub bindings: Vec<KdlBinding>,
 
     #[knuffel(child)]
+    pub decoration: Option<KdlDecoration>,
+
+    #[knuffel(child)]
     pub animation: Option<KdlAnimation>,
 
     #[knuffel(children(name = "plugin"))]
@@ -52,6 +55,23 @@ pub struct KdlConfig {
 pub struct KdlCanvas {
     #[knuffel(child, unwrap(argument))]
     pub background_color: Option<String>,
+}
+
+// ── Decoration / Window borders ─────────────────────────────────────
+
+#[derive(Debug, Decode)]
+pub struct KdlDecoration {
+    #[knuffel(child, unwrap(argument))]
+    pub border_width: Option<f64>,
+
+    #[knuffel(child, unwrap(argument))]
+    pub border_radius: Option<f64>,
+
+    #[knuffel(child, unwrap(argument))]
+    pub active_color: Option<String>,
+
+    #[knuffel(child, unwrap(argument))]
+    pub inactive_color: Option<String>,
 }
 
 // ── Output ────────────────────────────────────────────────────────────
@@ -168,6 +188,7 @@ pub struct KdlBookmark {
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
     pub canvas: CanvasConfig,
+    pub decoration: DecorationConfig,
     pub outputs: Vec<OutputConfig>,
     pub regions: Vec<RegionConfig>,
     pub bindings: Vec<BindingConfig>,
@@ -209,6 +230,14 @@ pub struct BindingConfig {
 }
 
 #[derive(Debug, Clone)]
+pub struct DecorationConfig {
+    pub border_width: f64,
+    pub border_radius: f64,
+    pub active_color: String,
+    pub inactive_color: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct AnimationConfig {
     pub default_ease: String,
     pub duration_ms: u64,
@@ -232,6 +261,17 @@ impl Default for CanvasConfig {
     fn default() -> Self {
         CanvasConfig {
             background_color: "#1a1a2e".into(),
+        }
+    }
+}
+
+impl Default for DecorationConfig {
+    fn default() -> Self {
+        DecorationConfig {
+            border_width: 3.0,
+            border_radius: 0.0,
+            active_color: "#6699ff".into(),
+            inactive_color: "#4a4a4a".into(),
         }
     }
 }
@@ -302,6 +342,16 @@ fn normalize(kdl: KdlConfig) -> Result<RuntimeConfig, ConfigError> {
         })
         .collect();
 
+    let decoration = kdl
+        .decoration
+        .map(|d| DecorationConfig {
+            border_width: d.border_width.unwrap_or(3.0),
+            border_radius: d.border_radius.unwrap_or(0.0),
+            active_color: d.active_color.unwrap_or_else(|| "#6699ff".into()),
+            inactive_color: d.inactive_color.unwrap_or_else(|| "#4a4a4a".into()),
+        })
+        .unwrap_or_default();
+
     let animation = kdl
         .animation
         .map(|a| AnimationConfig {
@@ -328,6 +378,7 @@ fn normalize(kdl: KdlConfig) -> Result<RuntimeConfig, ConfigError> {
 
     Ok(RuntimeConfig {
         canvas,
+        decoration,
         outputs,
         regions,
         bindings,
@@ -401,10 +452,29 @@ mod tests {
     }
 
     #[test]
+    fn parse_decoration_only() {
+        let src = "decoration {\n    border-width 4.0\n    border-radius 8.0\n    active-color \"#ff6600\"\n    inactive-color \"#333333\"\n}";
+        let result = parse_config_str("test.kdl", src);
+        assert!(result.is_ok(), "decoration: {:?}", result.err());
+        let cfg = result.unwrap();
+        assert_eq!(cfg.decoration.border_width, 4.0);
+        assert_eq!(cfg.decoration.border_radius, 8.0);
+        assert_eq!(cfg.decoration.active_color, "#ff6600");
+        assert_eq!(cfg.decoration.inactive_color, "#333333");
+    }
+
+    #[test]
     fn parse_full_config() {
         let kdl = r##"
 canvas {
     background-color "#0f0f23"
+}
+
+decoration {
+    border-width 4.0
+    border-radius 8.0
+    active-color "#6699ff"
+    inactive-color "#4a4a4a"
 }
 
 output "eDP-1" {
@@ -438,6 +508,10 @@ bookmark "origin" 0 0
         }
         let cfg = result.unwrap();
         assert_eq!(cfg.canvas.background_color, "#0f0f23");
+        assert_eq!(cfg.decoration.border_width, 4.0);
+        assert_eq!(cfg.decoration.border_radius, 8.0);
+        assert_eq!(cfg.decoration.active_color, "#6699ff");
+        assert_eq!(cfg.decoration.inactive_color, "#4a4a4a");
         assert_eq!(cfg.outputs.len(), 1);
         assert_eq!(cfg.outputs[0].name, "eDP-1");
         assert_eq!(cfg.outputs[0].x, 0);

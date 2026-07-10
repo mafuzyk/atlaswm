@@ -17,7 +17,7 @@ use smithay::{
         },
         winit::{self, WinitEvent},
     },
-    desktop::{Window, space::render_output},
+    desktop::{Window, layer_map_for_output, space::render_output},
     input::{
         keyboard::FilterResult,
         pointer::{ButtonEvent, MotionEvent, PointerHandle},
@@ -29,13 +29,14 @@ use smithay::{
         winit::event_loop::pump_events::PumpStatus,
         wayland_protocols_misc::server_decoration::server::org_kde_kwin_server_decoration_manager::Mode as SsdMode,
     },
-    utils::{Logical, Physical, Point, Size, Transform},
+    utils::{IsAlive, Logical, Physical, Point, Size, Transform},
     wayland::{
         socket::ListeningSocketSource,
     },
 };
 use tracing::{error, info, warn};
 
+use atlas_config::DecorationConfig;
 use atlas_space::{GlobalSpace, Size as GsSize, Point as GsPoint, Viewport};
 
 use crate::state::{AtlasState, ClientState, GrabState, GrabKind};
@@ -47,7 +48,6 @@ const KEY_Q: i32 = 16;
 const BTN_LEFT: u32 = 0x110;
 const BTN_RIGHT: u32 = 0x111;
 const MIN_WIN_SIZE: f64 = 100.0;
-const BORDER_WIDTH: f64 = 3.0;
 
 /// ── Spatial helpers ──────────────────────────────────────────────
 
@@ -109,15 +109,23 @@ fn find_gid(state: &AtlasState, window: &Window) -> Option<u64> {
     })
 }
 
+fn hex_to_color32f(hex: &str) -> Color32F {
+    let hex = hex.trim_start_matches('#');
+    let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(0) as f32 / 255.0;
+    let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(0) as f32 / 255.0;
+    let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(0) as f32 / 255.0;
+    Color32F::new(r, g, b, 1.0)
+}
+
 /// Build border `SolidColorRenderElement`s for every window currently
 /// mapped in the Smithay Space.
 fn build_border_elements(
     state: &AtlasState,
 ) -> Vec<SolidColorRenderElement> {
     let mut elements = Vec::new();
-    let border = BORDER_WIDTH;
-    let focused = Color32F::new(0.4, 0.6, 1.0, 1.0);   // bright blue
-    let unfocused = Color32F::new(0.3, 0.3, 0.3, 1.0);  // dim gray
+    let border = state.deco_config.border_width;
+    let focused = hex_to_color32f(&state.deco_config.active_color);
+    let unfocused = hex_to_color32f(&state.deco_config.inactive_color);
 
     for (gid, window) in &state.windows {
         if let Some(geo) = state.space.element_geometry(window) {
@@ -164,15 +172,26 @@ fn build_border_elements(
     elements
 }
 
-/// Truncate dead layer surfaces from the list.
+/// Truncate dead layer surfaces from the list and unmap from the output's LayerMap.
 fn prune_layer_surfaces(state: &mut AtlasState) {
-    state.layer_surfaces.retain(|s| s.alive());
+    let outputs: Vec<_> = state.space.outputs().cloned().collect();
+    state.layer_surfaces.retain(|s| {
+        if !s.alive() {
+            for o in &outputs {
+                let mut map = layer_map_for_output(o);
+                map.unmap_layer(s);
+            }
+            false
+        } else {
+            true
+        }
+    });
 }
 
 /// ── Keyboard ─────────────────────────────────────────────────────
 
 fn spawn_terminal() {
-    for cmd in &["gnome-terminal", "alacritty", "kitty", "foot", "weston-terminal"] {
+    for cmd in &["fish", "gnome-terminal", "alacritty", "kitty", "foot", "weston-terminal"] {
         if std::process::Command::new("which")
             .arg(cmd)
             .stdout(std::process::Stdio::null())
@@ -405,7 +424,7 @@ fn handle_button_event(
 
 /// ── Main loop ────────────────────────────────────────────────────
 
-pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
+pub fn run_winit(deco_config: Option<DecorationConfig>) -> Result<(), Box<dyn std::error::Error>> {
     let mut event_loop: EventLoop<AtlasState> = EventLoop::try_new()?;
     let display: Display<AtlasState> = Display::new()?;
     let dh = display.handle();
@@ -487,6 +506,7 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
         socket_name,
         space,
         damage_tracker,
+        deco_config: deco_config.unwrap_or_default(),
         global_space,
         viewport,
         windows: std::collections::HashMap::new(),
@@ -563,7 +583,8 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
                 Err(err) => { error!("Failed to bind renderer: {}", err); break; }
             };
 
-            // pass 1: main space + borders (custom_elements)
+            // render_output automatically handles LayerMap layer surfaces
+            // via space_render_elements (anchored to output, not affected by viewport).
             let result = render_output(
                 &state.output,
                 renderer,
@@ -575,30 +596,6 @@ pub fn run_winit() -> Result<(), Box<dyn std::error::Error>> {
                 &mut state.damage_tracker,
                 Color32F::new(0.1, 0.0, 0.0, 1.0),
             );
-
-            /*
-             * TODO: Layer shell HUD rendering.
-             *
-             * Layer-shell surfaces live OUTSIDE GlobalSpace — they are
-             * anchored to the physical output and should NOT scroll
-             * with the viewport.  To render them:
-             *
-             *   1. Iterate state.layer_surfaces (pruned above).
-             *   2. For each layer surface, compute its screen position
-             *      from its cached state (anchor, margin, layer, size).
-             *   3. Import the WlSurface buffer and create a
-             *      WaylandSurfaceRenderElement at that position.
-             *   4. Render them on top (overlay) or below (background)
-             *      the main space.
-             *
-             * The simplest integration point is a *second* call to
-             * damage_tracker.render_output() with the collected
-             * layer-shell elements after the main pass — but the
-             * clear_color must be transparent / skip clear.
-             *
-             * For now the protocol surfaces are registered and
-             * configured; the visual HUD pass is deferred.
-             */
 
             let frame_time = start_time.elapsed();
             match result {
