@@ -215,9 +215,10 @@ pub fn handle_keyboard_event<B: InputBackend>(
     state: &mut AtlasState,
     event: &impl KeyboardKeyEvent<B>,
     keyboard: &smithay::input::keyboard::KeyboardHandle<AtlasState>,
+    evdev_code: i32,
 ) {
     let pressed = event.state() == smithay::backend::input::KeyState::Pressed;
-    let evdev = event.key_code().raw() as i32 - 8;
+    let evdev = evdev_code;
 
     if evdev == MOD_KEY_EVDEV {
         state.mod_pressed = pressed;
@@ -514,6 +515,7 @@ pub fn run_winit(deco_config: Option<DecorationConfig>) -> Result<(), Box<dyn st
         grab: None,
         pointer_location: Point::from((0.0f64, 0.0f64)),
         mod_pressed: false,
+        ctrl_pressed: false,
         serial_counter: 0,
         focused_gid: None,
         cursor_status: smithay::input::pointer::CursorImageStatus::default_named(),
@@ -540,7 +542,10 @@ pub fn run_winit(deco_config: Option<DecorationConfig>) -> Result<(), Box<dyn st
                 state.output.set_preferred(mode);
             }
             WinitEvent::Input(event) => match event {
-                InputEvent::Keyboard { event } => handle_keyboard_event(&mut state, &event, &keyboard),
+                InputEvent::Keyboard { event } => {
+                    let evdev = event.key_code().raw() as i32 - 8;
+                    handle_keyboard_event(&mut state, &event, &keyboard, evdev);
+                }
                 InputEvent::PointerMotionAbsolute { event } => {
                     let phys = Point::<f64, Physical>::from((event.x(), event.y()));
                     let logical = Point::<f64, Logical>::from((phys.x, phys.y));

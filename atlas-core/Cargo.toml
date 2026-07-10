@@ -7,7 +7,7 @@ license.workspace = true
 [dependencies]
 atlas-config = { path = "../atlas-config" }
 atlas-space = { path = "../atlas-space" }
-smithay = { path = "/tmp/opencode/smithay", features = [
+smithay = { path = "/home/charlie/smithay", features = [
     "backend_winit",
     "backend_drm",
     "backend_gbm",
@@ -20,5 +20,6 @@ smithay = { path = "/tmp/opencode/smithay", features = [
     "renderer_multi",
     "desktop",
 ] }
-smithay-drm-extras = { path = "/tmp/opencode/smithay/smithay-drm-extras" }
+smithay-drm-extras = { path = "/home/charlie/smithay/smithay-drm-extras" }
 tracing = "0.1"
+calloop = { version = "0.14", features = ["signals"] }

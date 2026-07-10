@@ -88,6 +88,7 @@ pub struct AtlasState {
     pub grab: Option<GrabState>,
     pub pointer_location: Point<f64, Physical>,
     pub mod_pressed: bool,
+    pub ctrl_pressed: bool,
     pub serial_counter: u32,
     pub focused_gid: Option<u64>,
     pub cursor_status: CursorImageStatus,
