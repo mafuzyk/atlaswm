@@ -404,6 +404,7 @@ pub fn render_preview(cfg: &Config, info: &SysInfo, ascii_art: &str, term_width:
 /// Format a panel field with truncation matching the original Python build().
 fn build_panel(field: &FieldDef, info: &SysInfo, panel: &crate::config::PanelConfig, fg_color: Color, avail_w: usize) -> (String, usize) {
     let val = info.get(&field.field).unwrap_or("?");
+    let avail_w = avail_w.min(panel.max_val_width);
 
     let sep = "\u{e0b0}";
     let seg = format!(" {} {} ", field.icon, field.label);
@@ -464,6 +465,7 @@ fn build_panel(field: &FieldDef, info: &SysInfo, panel: &crate::config::PanelCon
 /// Format a panel field as StyledSegments (for the TUI preview).
 fn build_panel_styled(field: &FieldDef, info: &SysInfo, panel: &crate::config::PanelConfig, fg_color: Color, avail_w: usize) -> (Vec<StyledSegment>, usize) {
     let val = info.get(&field.field).unwrap_or("?");
+    let avail_w = avail_w.min(panel.max_val_width);
 
     let sep = "\u{e0b0}";
     let seg = format!(" {} {} ", field.icon, field.label);

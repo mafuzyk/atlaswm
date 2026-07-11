@@ -72,4 +72,13 @@ impl AppLayout {
             AppLayout::Balanced => 3,
         }
     }
+
+    /// Maximum width for a single panel (icon + label + value).
+    /// Compact mode limits this to force value truncation.
+    pub fn max_panel_width(&self) -> usize {
+        match self {
+            AppLayout::Compact => 35,
+            _ => 999,
+        }
+    }
 }

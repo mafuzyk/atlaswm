@@ -699,6 +699,7 @@ fn apply_layout(app: &mut App, index: usize) {
         app.cfg.panel.gap = layout.gap();
         app.cfg.panel.left_pad = layout.padding();
         app.cfg.panel.right_pad = layout.padding();
+        app.cfg.panel.max_val_width = layout.max_panel_width();
     }
 }
 

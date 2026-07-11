@@ -107,6 +107,8 @@ pub struct PanelConfig {
     pub gap: usize,
     #[serde(default = "default_max_shift")]
     pub max_shift: usize,
+    #[serde(default = "default_max_val_width")]
+    pub max_val_width: usize,
 }
 
 impl Default for PanelConfig {
@@ -118,6 +120,7 @@ impl Default for PanelConfig {
             right_pad: default_right_pad(),
             gap: default_gap(),
             max_shift: default_max_shift(),
+            max_val_width: default_max_val_width(),
         }
     }
 }
@@ -216,6 +219,9 @@ fn default_gap() -> usize {
 }
 fn default_max_shift() -> usize {
     2
+}
+fn default_max_val_width() -> usize {
+    999
 }
 fn default_enabled() -> bool {
     true
@@ -329,6 +335,7 @@ impl Config {
                 right_pad: default_right_pad(),
                 gap: default_gap(),
                 max_shift: default_max_shift(),
+                max_val_width: default_max_val_width(),
             },
             display: DisplayConfig {
                 left: default_left_fields(),
