@@ -3,13 +3,13 @@
 # atlasfetch
 
 **Centered ASCII art with powerline panels.**  
-Zero dependencies · Pure Python · Linux
+Single binary · Linux · Written in Rust
 
-[![Python](https://img.shields.io/badge/python-%E2%89%A53.6-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
+[![Rust](https://img.shields.io/badge/rust-1.85+-DEA584?style=flat-square&logo=rust&logoColor=white)](https://rust-lang.org)
 [![License](https://img.shields.io/badge/license-GPL--3.0-8A2BE2?style=flat-square)](LICENSE)
 [![Status](https://img.shields.io/badge/status-stable-22AA66?style=flat-square)]()
 <br>
-[Features](#features) · [Install](#install) · [Usage](#usage) · [Customization](#customization) · [Comparison](#comparison) · [Roadmap](#roadmap)
+[Features](#features) · [Install](#install) · [Usage](#usage) · [Customization](#customization) · [Design Philosophy](#design-philosophy) · [Roadmap](#roadmap)
 
 <br>
 
@@ -21,9 +21,7 @@ Zero dependencies · Pure Python · Linux
 
 atlasfetch is a system information tool designed to accompany [atlasWM](https://github.com/mafuzyk/atlaswm), a Wayland compositor built around an infinite canvas. It shares the same aesthetic priorities: centered layouts, powerline separators, and visual balance.
 
-It displays your distro's ASCII logo centered on the terminal, with powerline-styled info panels on both sides. It is not a neofetch or fastfetch competitor — it simply provides a fetch tool that matches the atlasWM look. If you want a standalone general-purpose fetch, those projects are better choices.
-
-It runs on any Linux distro with Python ≥ 3.6, no matter your window manager or desktop environment. No pip, no dependencies, no compilation.
+It displays your distro's ASCII logo centered on the terminal, with powerline-styled info panels on both sides. It runs on any Linux distro, no matter your window manager or desktop environment.
 
 ---
 
@@ -45,12 +43,12 @@ It runs on any Linux distro with Python ≥ 3.6, no matter your window manager o
 <tr>
 <td width="50%">
 
-**Zero dependencies** — pure Python standard library. Reads `/proc`, `/sys`, and `pci.ids`. No pip install, no virtualenv, no compilation.
+**Single binary** — compiled Rust, no runtime dependencies. Drop it in your path and it works.
 
 </td>
 <td width="50%">
 
-**First-run wizard** — pick a color palette and ASCII logo on first launch. No need to edit config files before seeing results.
+**TUI configurator** — run `atlasfetch setup` for an interactive configuration experience with live preview, theme selection, and field management.
 
 </td>
 </tr>
@@ -62,14 +60,14 @@ It runs on any Linux distro with Python ≥ 3.6, no matter your window manager o
 </td>
 <td width="50%">
 
-**Custom palettes** — create your own color schemes through the wizard or directly in `config.json`. They persist and are listed alongside built-in presets.
+**Custom palettes** — create your own color schemes through the TUI or directly in `config.json`. They persist and are listed alongside built-in presets.
 
 </td>
 </tr>
 <tr>
 <td width="50%">
 
-**Multi-distro package counting** — detects packages from pacman, dpkg, rpm, xbps, apk, emerge, nix-store, flatpak, snap, and more.
+**Multi-distro package counting** — detects packages from pacman, dpkg, rpm, xbps, apk, emerge, nix-store, flatpak, and more.
 
 </td>
 <td width="50%">
@@ -94,7 +92,7 @@ It runs on any Linux distro with Python ≥ 3.6, no matter your window manager o
      Pkg   1766              `+oooooo:        GPU   Radeon …
       Sh   fish              -+oooooo+:        Mem   3.2/7.6G
       WM   Hyprland        `/:-:++oooo+:       Dsk   28/58G
-                                                                `
+                                                                 `
 ```
 
 ---
@@ -103,17 +101,16 @@ It runs on any Linux distro with Python ≥ 3.6, no matter your window manager o
 
 ### Requirements
 
-- **Python** ≥ 3.6 (standard library only — no pip packages)
+- **Linux** (reads from `/proc` and `/sys`)
 - **Nerd Font** (optional — for panel icons)
-- **pci.ids** (optional — for descriptive GPU names; falls back to vendor hex)
 
 <br>
 
 <details open>
-<summary><b>Quick install</b> — any distro, one command</summary>
+<summary><b>Pre-built binary</b> — download the latest release</summary>
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/mafuzyk/atlasfetch/main/atlasfetch \
+curl -sSL https://github.com/mafuzyk/atlasfetch/releases/latest/download/atlasfetch \
   -o ~/.local/bin/atlasfetch && chmod +x ~/.local/bin/atlasfetch
 ```
 
@@ -144,24 +141,13 @@ nix profile install github:mafuzyk/atlasfetch # install
 <br>
 
 <details>
-<summary><b>Git clone</b> — development or offline use</summary>
+<summary><b>Build from source</b></summary>
 
 ```bash
-git clone https://github.com/mafuzyk/atlasfetch.git ~/.local/share/atlasfetch
-ln -sf ~/.local/share/atlasfetch/atlasfetch ~/.local/bin/atlasfetch
-```
-
-</details>
-
-<br>
-
-<details>
-<summary><b>Manual</b></summary>
-
-```bash
-wget https://raw.githubusercontent.com/mafuzyk/atlasfetch/main/atlasfetch
-chmod +x atlasfetch
-sudo mv atlasfetch /usr/local/bin/
+git clone https://github.com/mafuzyk/atlasfetch.git
+cd atlasfetch
+cargo build --release
+cp target/release/atlasfetch ~/.local/bin/
 ```
 
 </details>
@@ -174,12 +160,10 @@ sudo mv atlasfetch /usr/local/bin/
 atlasfetch
 ```
 
-On first launch, the interactive setup asks for a color palette and ASCII logo. After that, it renders system info immediately.
-
-To reopen the wizard later:
+On first launch, atlasfetch creates a default configuration and renders system info immediately. To customize, use the TUI configurator:
 
 ```bash
-atlasfetch -i
+atlasfetch setup
 ```
 
 ---
@@ -188,9 +172,9 @@ atlasfetch -i
 
 ```
 atlasfetch              Render system info
-atlasfetch -i           Open setup wizard
+atlasfetch setup        Open TUI configurator
 atlasfetch --preset <n> Apply a preset palette and exit
-atlasfetch --list-presets List all presets with color swatches
+atlasfetch --list-presets List all presets
 atlasfetch -h           Show help
 atlasfetch -v           Show version
 ```
@@ -232,7 +216,7 @@ fi
 
 ### Workflows
 
-**Set a theme without the wizard:**
+**Set a theme without the TUI:**
 ```bash
 atlasfetch --preset dracula
 ```
@@ -276,7 +260,7 @@ Configuration lives in `~/.config/atlasfetch/config.json`, created on first run.
 
 ### Custom ASCII
 
-Place any ASCII art in `~/.config/atlasfetch/logo.txt`. The tool picks it up automatically. The wizard can also select from the 18 built-in distro logos.
+Place any ASCII art in `~/.config/atlasfetch/logo.txt`. The tool picks it up automatically. The TUI can also select from the 18 built-in distro logos.
 
 ### Custom palettes
 
@@ -290,7 +274,7 @@ Add your own color schemes in `config.json`:
 }
 ```
 
-The wizard includes a custom palette creator — choose `c` at the palette prompt and type hex colors separated by spaces.
+The TUI configurator includes a palette editor — open the configurator and navigate to the theme screen to add custom colors.
 
 ### Presets
 
@@ -311,41 +295,23 @@ Built-in color presets:
 
 ---
 
-## Comparison
+## Design Philosophy
 
-atlasfetch is not a competitor to these projects — it solves a different problem. This table is provided for reference, not comparison shopping.
+atlasfetch was built around a simple idea: system information should be pleasant to look at.
 
-| | atlasfetch | fastfetch | neofetch |
-|---|---|---|---|
-| **Layout** | Centered ASCII with side panels | Left-aligned, customizable | Left-aligned, customizable |
-| **Dependencies** | None (Python stdlib) | Compiled C++, ~30 libraries | Bash, optional dependencies |
-| **Install size** | ~40 KB (single script) | ~2 MB (binary) | ~1 MB (script + logos) |
-| **Logo count** | 18 distro logos | ~180 logos | ~160 logos |
-| **Configuration** | `config.json` | `config.jsonc` | `config.conf` |
-| **Speed** | Fast (pure Python) | Faster (compiled C) | Moderate (Bash subshells) |
-| **Setup wizard** | Yes | No | No |
-| **Powerline support** | Native | Requires theme | Requires theme |
-| **Language** | Python 3 | C | Bash |
-| **Platform** | Linux only | Linux, macOS, Windows, BSD | Linux, macOS, BSD |
+Most fetch tools align text to the left edge of the terminal. atlasfetch centers everything — the ASCII art, the title, the separator — and wraps information in powerline-styled panels on both sides. This creates a calm, balanced composition that works at any terminal width.
 
----
+The TUI configurator (`atlasfetch setup`) makes customization immediate and visual. Every change — theme, logo, layout, field order — updates the preview in real time. There is no edit-and-reload cycle.
 
-## Philosophy
+The project values:
 
-atlasfetch exists primarily as a companion to atlasWM. It was built to match a specific visual language — centered, symmetrical, with powerline separators — not to compete with general-purpose fetch tools.
+- **Simplicity** — one binary, no runtime dependencies, no package manager required.
+- **Clarity** — the output reads cleanly at a glance. ASCII, title, separator, panels — no clutter.
+- **Adaptability** — when the terminal is narrow, the logo steps aside and the panels remain readable.
+- **Self-expression** — 25 color presets, custom palettes, custom ASCII art, and full field control.
+- **Craft** — powerline separators, cascade offsets, truncation with ellipsis, careful spacing.
 
-**What atlasfetch is not:**
-
-- It is not a neofetch or fastfetch replacement.
-- It is not a comprehensive system diagnostic tool.
-- It is not written for maximum performance or maximum logo count.
-
-**What atlasfetch is:**
-
-- A fetch tool designed for the atlasWM aesthetic.
-- A single Python script you can read, understand, and modify.
-- Zero dependencies beyond the standard library.
-- A tool that respects terminal width — when the screen is too narrow, the logo steps out of the way.
+Atlasfetch does one thing and tries to do it well: display your system with centered elegance.
 
 ---
 
@@ -353,7 +319,7 @@ atlasfetch exists primarily as a companion to atlasWM. It was built to match a s
 
 - [x] Centered ASCII art with 18 distro logos
 - [x] Powerline left/right panels with auto-truncation
-- [x] Interactive first-run wizard
+- [x] TUI configurator with live preview
 - [x] 25 color presets (flags + themes)
 - [x] Custom palette support
 - [x] Multi-distro package detection
@@ -395,15 +361,22 @@ atlasfetch exists primarily as a companion to atlasWM. It was built to match a s
 ## Project
 
 ```
-atlasfetch          → single Python script
-├── ATLAS_LOGO      → default ASCII (Arch Linux)
-├── 18 distro logos → one file per logo
-├── 25 presets      → color schemes
-├── DEFAULT_CFG     → default configuration
-├── _collect_info() → system field gathering
-├── render()        → layout engine
-├── _run_setup()    → wizard
-└── main()          → CLI dispatch
+atlasfetch           → Rust binary
+├── src/             → source code
+│   ├── main.rs      → entry point
+│   ├── cli.rs       → argument parsing
+│   ├── config.rs    → configuration model
+│   ├── info.rs      → system info collection
+│   ├── render.rs    → layout engine
+│   ├── theme.rs     → color presets
+│   ├── ascii.rs     → logo loading
+│   ├── layout.rs    → layout definitions
+│   └── tui/         → TUI configurator
+│       ├── mod.rs
+│       └── app.rs
+├── logos/           → 18 distro ASCII arts
+├── flake.nix        → Nix packaging
+└── Cargo.toml       → dependencies
 ```
 
 ---
@@ -418,7 +391,5 @@ atlasfetch          → single Python script
 
 Contributions, issues, and logo submissions are welcome.  
 If you find this useful, consider leaving a star.
-
-<sub><sup>AI used exclusively for code review and commit messages.</sup></sub>
 
 </div>
