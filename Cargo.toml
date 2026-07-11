@@ -13,7 +13,7 @@ members = [
     "atlas-ipc",
     "atlas-plugin-api",
     "atlas-plugin",
-    "compositor",
+    "compositor", "atlasfetch",
 ]
 
 [workspace.package]
