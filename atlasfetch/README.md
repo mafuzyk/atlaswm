@@ -107,11 +107,13 @@ It displays your distro's ASCII logo centered on the terminal, with powerline-st
 <br>
 
 <details open>
-<summary><b>Pre-built binary</b> — download the latest release</summary>
+<summary><b>Build from source</b> — recommended</summary>
 
 ```bash
-curl -sSL https://github.com/mafuzyk/atlasfetch/releases/latest/download/atlasfetch \
-  -o ~/.local/bin/atlasfetch && chmod +x ~/.local/bin/atlasfetch
+git clone https://github.com/mafuzyk/atlasfetch.git
+cd atlasfetch
+cargo build --release
+cp target/release/atlasfetch ~/.local/bin/
 ```
 
 Make sure `~/.local/bin` is in your `PATH`:
@@ -140,31 +142,29 @@ nix profile install github:mafuzyk/atlasfetch # install
 
 <br>
 
-<details>
-<summary><b>Build from source</b></summary>
-
-```bash
-git clone https://github.com/mafuzyk/atlasfetch.git
-cd atlasfetch
-cargo build --release
-cp target/release/atlasfetch ~/.local/bin/
-```
-
-</details>
-
-<br>
-
 ### First run
 
 ```bash
 atlasfetch
 ```
 
-On first launch, atlasfetch creates a default configuration and renders system info immediately. To customize, use the TUI configurator:
+On first launch, atlasfetch creates a default configuration and renders system info with your distro's logo. To customize the look, open the TUI configurator:
 
 ```bash
 atlasfetch setup
 ```
+
+The configurator walks through six screens:
+
+| Step | What you choose |
+|------|----------------|
+| **Theme** | One of 25 color presets — flag themes or curated palettes |
+| **ASCII** | Your distro logo (18 included) or a custom file |
+| **Layout** | How panels are positioned (Centered, Compact, Wide, Minimal, Balanced) |
+| **Panels** | Which fields appear, their order, and labels |
+| **Summary** | Review everything and save |
+
+Every screen shows a live preview of how the output will look. Changes appear instantly — no save-and-reload cycle.
 
 ---
 
