@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -24,10 +25,16 @@ use smithay::{
         },
         libinput::{LibinputInputBackend, LibinputSessionInterface},
         renderer::{
-            element::{Kind, solid::{SolidColorBuffer, SolidColorRenderElement}},
+            ImportAll, ImportMem, Renderer,
+            ImportMemWl, ImportDmaWl,
+            element::{
+                AsRenderElements, Kind,
+                memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement},
+                solid::SolidColorRenderElement,
+                surface::WaylandSurfaceRenderElement,
+            },
             gles::GlesRenderer,
             multigpu::{GpuManager, gbm::GbmGlesBackend},
-            Color32F,
         },
         session::{
             Event as SessionEvent, Session,
@@ -35,7 +42,11 @@ use smithay::{
         },
         udev::{UdevBackend, UdevEvent},
     },
-    desktop::utils::OutputPresentationFeedback,
+    desktop::{
+        space::SpaceRenderElements,
+        utils::OutputPresentationFeedback,
+    },
+    input::pointer::CursorImageStatus,
     output::{Mode as WlMode, Output, PhysicalProperties, Subpixel},
     reexports::{
         calloop::{
@@ -49,7 +60,7 @@ use smithay::{
         rustix::fs::OFlags,
         wayland_server::Display,
     },
-    utils::{DeviceFd, Logical, Physical, Point, Transform},
+    utils::{DeviceFd, Logical, Physical, Point, Scale, Size, Transform},
     wayland::socket::ListeningSocketSource,
 };
 use smithay_drm_extras::drm_scanner::{DrmScanEvent, DrmScanner};
@@ -63,6 +74,146 @@ use crate::backend::winit;
 const COLOR_FORMATS: &[Fourcc] = &[Fourcc::Argb8888, Fourcc::Xrgb8888];
 
 type GbmDrmOutputUserData = Option<OutputPresentationFeedback>;
+
+// ────── Pointer Element ──────────────────────────────────────────────
+
+#[derive(Debug)]
+pub struct PointerElement {
+    buffer: Option<MemoryRenderBuffer>,
+    status: CursorImageStatus,
+    hotspot: Point<i32, Physical>,
+}
+
+impl Default for PointerElement {
+    fn default() -> Self {
+        Self {
+            buffer: None,
+            status: CursorImageStatus::default_named(),
+            hotspot: Point::from((0i32, 0i32)),
+        }
+    }
+}
+
+impl PointerElement {
+    pub fn set_buffer(&mut self, buffer: MemoryRenderBuffer) {
+        self.buffer = Some(buffer);
+    }
+
+    pub fn set_status(&mut self, status: CursorImageStatus) {
+        self.status = status;
+    }
+
+    pub fn set_hotspot(&mut self, hotspot: Point<i32, Physical>) {
+        self.hotspot = hotspot;
+    }
+}
+
+smithay::backend::renderer::element::render_elements! {
+    pub PointerRenderElement<R> where
+        R: ImportMem;
+    Memory=MemoryRenderBufferRenderElement<R>,
+}
+
+smithay::backend::renderer::element::render_elements! {
+    pub UdevRenderElements<R> where
+        R: ImportAll + ImportMem;
+    // Wayland window / layer-shell surfaces (collected individually)
+    Surface=smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement<R>,
+    // Compositor-drawn borders
+    Border=SolidColorRenderElement,
+    // Software cursor
+    Cursor=PointerRenderElement<R>,
+}
+
+impl<R: Renderer> AsRenderElements<R> for PointerElement
+where
+    R: ImportMem,
+    R::TextureId: Clone + Send + 'static,
+{
+    type RenderElement = PointerRenderElement<R>;
+
+    fn render_elements<E>(
+        &self,
+        renderer: &mut R,
+        location: Point<i32, Physical>,
+        _scale: Scale<f64>,
+        _alpha: f32,
+    ) -> Vec<E>
+    where
+        E: From<Self::RenderElement>,
+    {
+        let Some(buffer) = self.buffer.as_ref() else {
+            return vec![];
+        };
+        
+        // Adjust location by hotspot
+        let cursor_location = location - self.hotspot;
+        
+        match &self.status {
+            CursorImageStatus::Hidden => vec![],
+            // Render the cursor buffer as a memory element
+            CursorImageStatus::Named(_) | CursorImageStatus::Surface(_) => {
+                if let Ok(cursor) = MemoryRenderBufferRenderElement::from_buffer(
+                    renderer,
+                    cursor_location.to_f64(),
+                    buffer,
+                    None,
+                    None,
+                    None,
+                    Kind::Cursor,
+                ) {
+                    vec![PointerRenderElement::<R>::from(cursor).into()]
+                } else {
+                    vec![]
+                }
+            }
+        }
+    }
+}
+
+// ────── Cursor loading ──────────────────────────────────────────────
+
+fn load_cursor_theme() -> Option<(MemoryRenderBuffer, Point<i32, Physical>)> {
+    let name = std::env::var("XCURSOR_THEME")
+        .ok()
+        .unwrap_or_else(|| "default".into());
+    let size: u32 = std::env::var("XCURSOR_SIZE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(24);
+
+    info!(theme = %name, cursor_size = size, "Loading cursor theme");
+
+    let theme = xcursor::CursorTheme::load(&name);
+    let icon_path = theme.load_icon("default")?;
+    let mut cursor_file = std::fs::File::open(icon_path).ok()?;
+    let mut cursor_data = Vec::new();
+    cursor_file.read_to_end(&mut cursor_data).ok()?;
+    let images = xcursor::parser::parse_xcursor(&cursor_data)?;
+
+    let image = images
+        .iter()
+        .min_by_key(|img| (size as i32 - img.size as i32).abs())?;
+
+    let buf_size = Size::from((image.width as i32, image.height as i32));
+    let buffer = MemoryRenderBuffer::from_slice(
+        &image.pixels_rgba,
+        Fourcc::Abgr8888,
+        buf_size,
+        1,
+        Transform::Normal,
+        None,
+    );
+    let hotspot = Point::from((image.xhot as i32, image.yhot as i32));
+
+    info!(
+        cursor_w = image.width, cursor_h = image.height,
+        hotspot_x = image.xhot, hotspot_y = image.yhot,
+        "Cursor loaded"
+    );
+
+    Some((buffer, hotspot))
+}
 
 // ────── Data ───────────────────────────────────────────────────────
 
@@ -96,9 +247,19 @@ pub struct UdevState {
     pub primary_gpu: DrmNode,
     pub atlas: AtlasState,
     pub running: Arc<AtomicBool>,
+    pub pointer_element: PointerElement,
 }
 
 use smithay::backend::drm::DrmNode;
+
+// ── Type alias for the concrete renderer used by the udev backend ────────────
+// single_renderer() returns MultiRenderer<'_, '_, Backend, Backend>.
+type UdevRenderer<'a> = smithay::backend::renderer::multigpu::MultiRenderer<
+    'a,
+    'a,
+    GbmGlesBackend<GlesRenderer, DrmDeviceFd>,
+    GbmGlesBackend<GlesRenderer, DrmDeviceFd>,
+>;
 
 // ────── Entry point ────────────────────────────────────────────────
 
@@ -156,6 +317,21 @@ pub fn run_udev(config: RuntimeConfig) {
     };
 
     // ── Wayland state ──────────────────────────────────────────
+let (cursor_buffer, cursor_hotspot) = load_cursor_theme().unwrap_or_else(|| {
+            info!("No cursor theme found, using fallback white square");
+            let size = Size::from((16i32, 16i32));
+            let pixels = vec![255u8; (16 * 16 * 4) as usize];
+            (
+                MemoryRenderBuffer::from_slice(&pixels, Fourcc::Abgr8888, size, 1, Transform::Normal, None),
+                Point::from((0i32, 0i32)),
+            )
+        });
+
+        // Set up pointer element with the cursor
+        let mut pointer_element = PointerElement::default();
+        pointer_element.set_buffer(cursor_buffer);
+        pointer_element.set_hotspot(cursor_hotspot);
+
     let compositor_state = smithay::wayland::compositor::CompositorState::new::<AtlasState>(&dh);
     let shm_state = smithay::wayland::shm::ShmState::new::<AtlasState>(&dh, vec![]);
     let mut seat_state = smithay::input::SeatState::new();
@@ -223,17 +399,19 @@ pub fn run_udev(config: RuntimeConfig) {
         global_space: atlas_space::GlobalSpace::new(),
         viewport: atlas_space::Viewport::new("udev"),
         windows: HashMap::new(),
-        running: true,
         grab: None,
         pointer_location: Point::from((0.0f64, 0.0f64)),
         mod_pressed: false,
         ctrl_pressed: false,
         serial_counter: 0,
         focused_gid: None,
+        canvas_drag_origin: None,
+        screen_size: Size::from((0, 0)),
         cursor_status: smithay::input::pointer::CursorImageStatus::default_named(),
         kde_decoration_state: kde,
         layer_shell_state: lshell,
         layer_surfaces: Vec::new(),
+        popups: smithay::desktop::PopupManager::default(),
     };
 
     let mut us = UdevState {
@@ -243,6 +421,7 @@ pub fn run_udev(config: RuntimeConfig) {
         primary_gpu,
         atlas,
         running: Arc::new(AtomicBool::new(true)),
+        pointer_element,
     };
 
     // ── Register sources ───────────────────────────────────────
@@ -564,7 +743,8 @@ impl UdevState {
         };
 
         info!(output = %name, "Initialising DrmOutput — modeset with planes");
-        match b.mgr.lock().initialize_output::<_, smithay::backend::renderer::element::solid::SolidColorRenderElement>(
+        // Use SolidColorRenderElement for the initial modeset (no cursor needed)
+        match b.mgr.lock().initialize_output::<_, SolidColorRenderElement>(
             crtc, *drm_mode, &[connector_info.handle()], &output, planes,
             &mut renderer, &DrmOutputRenderElements::default(),
         ) {
@@ -594,7 +774,8 @@ impl UdevState {
                 Ok(r) => r,
                 Err(_) => return,
             };
-            let _ = b.mgr.lock().try_to_restore_modifiers::<_, smithay::backend::renderer::element::solid::SolidColorRenderElement>(
+            // SolidColorRenderElement is fine for modifier restoration
+            let _ = b.mgr.lock().try_to_restore_modifiers::<_, SolidColorRenderElement>(
                 &mut renderer,
                 &DrmOutputRenderElements::default(),
             );
@@ -644,24 +825,67 @@ impl UdevState {
         }
         self.atlas.space.refresh();
 
-        let mut elements = winit::build_border_elements(&self.atlas);
+        let mut elements: Vec<UdevRenderElements<_>> = Vec::new();
 
-        // Software cursor — a small white square at the pointer position
-        let (cx, cy) = (self.atlas.pointer_location.x as i32, self.atlas.pointer_location.y as i32);
-        let cursor_buf = SolidColorBuffer::new((16, 16), Color32F::new(1.0, 1.0, 1.0, 1.0));
-        elements.push(SolidColorRenderElement::from_buffer(
-            &cursor_buf,
-            Point::from((cx, cy)),
-            1.0, 1.0, Kind::Unspecified,
+        // ── 1. Wayland window surfaces via Smithay Space ──────────────────────
+        // space_render_elements handles window surfaces, layer-shell surfaces,
+        // damage tracking, subsurfaces and popups automatically.
+        match smithay::desktop::space::space_render_elements(
+            &mut renderer,
+            [&self.atlas.space],
+            &d.output,
+            1.0_f32,
+        ) {
+            Ok(space_elements) => {
+                elements.extend(space_elements.into_iter().map(UdevRenderElements::Space));
+            }
+            Err(e) => warn!(?crtc, "space_render_elements: {e:?}"),
+        }
+
+        // ── 2. Compositor-drawn window borders ────────────────────────────────
+        for border in winit::build_border_elements(&self.atlas) {
+            elements.push(UdevRenderElements::Border(border));
+        }
+
+        // ── 3. Software cursor ────────────────────────────────────────────────
+        let cursor_pos = Point::<i32, Physical>::from((
+            self.atlas.pointer_location.x as i32,
+            self.atlas.pointer_location.y as i32,
         ));
+        elements.extend(
+            self.pointer_element
+                .render_elements(&mut renderer, cursor_pos, Scale::from(1.0), 1.0)
+                .into_iter()
+                .map(|e: PointerRenderElement<_>| UdevRenderElements::Cursor(e)),
+        );
+
+        let output = d.output.clone();
 
         match d.drm_output.render_frame(
-            &mut renderer, &elements, winit::hex_to_color32f(&self.atlas.config.canvas.background_color), FrameFlags::empty(),
+            &mut renderer,
+            &elements,
+            winit::hex_to_color32f(&self.atlas.config.canvas.background_color),
+            FrameFlags::empty(),
         ) {
             Ok(_) => {
-                let user_data = Some(OutputPresentationFeedback::new(&d.output));
+                let user_data = Some(OutputPresentationFeedback::new(&output));
                 if let Err(e) = d.drm_output.queue_frame(user_data) {
                     warn!(?crtc, "queue_frame: {e:?}");
+                }
+
+                // ── 4. Tell every window client it can draw the next frame ────
+                // Without send_frame clients will stall waiting for frame callbacks.
+                let start = std::time::Instant::now();
+                let throttle = Some(std::time::Duration::from_secs(1));
+                for window in self.atlas.space.elements() {
+                    if self.atlas.space.outputs_for_element(window).contains(&output) {
+                        window.send_frame(
+                            &output,
+                            start.elapsed(),
+                            throttle,
+                            smithay::desktop::utils::surface_primary_scanout_output,
+                        );
+                    }
                 }
             }
             Err(e) => warn!(?crtc, "render_frame: {e:?}"),
@@ -720,7 +944,10 @@ impl UdevState {
                 }
                 
                 let new_phys = Point::<f64, Physical>::from((new_x, new_y));
-                let logical = Point::<f64, Logical>::from((new_phys.x, new_phys.y));
+                let logical = Point::<f64, Logical>::from((
+                    new_x / self.atlas.viewport.zoom + self.atlas.viewport.x,
+                    new_y / self.atlas.viewport.zoom + self.atlas.viewport.y,
+                ));
                 winit::handle_motion_event(&mut self.atlas, &pt, new_phys, logical);
             }
             InputEvent::PointerButton { event } => {

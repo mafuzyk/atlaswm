@@ -1,7 +1,0 @@
-__pycache__/
-*.pyc
-/atlasfetch
-atlasfetch.log
-
-# Added by cargo
-/target

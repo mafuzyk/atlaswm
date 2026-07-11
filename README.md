@@ -205,11 +205,11 @@ The **Mod** key is the **Super / Windows** key (evdev 125).
 
 ## atlasfetch
 
-A companion fetch tool designed to match the atlasWM aesthetic — centered ASCII art with powerline panels, 25 color presets (LGBTQ+ flags + themes), and auto‑detecting your distro's logo.
+A companion fetch tool designed to match the atlasWM aesthetic — centered ASCII art with powerline panels, 25 color presets, and a TUI configurator with live preview.
 
-[github.com/mafuzyk/atlasfetch](https://github.com/mafuzyk/atlasfetch)
-
-> atlasfetch is fully self‑contained (Python stdlib only) and runs on **any** Linux distro — it doesn't require atlasWM or any specific compositor. Install it independently, configure it once, and it'll greet you every time you open a terminal.
+<p style="margin-left: 2em;">
+<a href="https://github.com/mafuzyk/atlasfetch">github.com/mafuzyk/atlasfetch</a>
+</p>
 
 ---
 

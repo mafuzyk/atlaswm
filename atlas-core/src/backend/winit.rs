@@ -1,11 +1,10 @@
 use std::sync::Arc;
-use std::time::Duration;
 
 use smithay::{
     backend::{
         input::{
-            AbsolutePositionEvent, ButtonState, InputBackend, InputEvent, KeyboardKeyEvent,
-            PointerButtonEvent,
+            AbsolutePositionEvent, Axis, ButtonState, InputBackend, InputEvent, KeyboardKeyEvent,
+            PointerAxisEvent, PointerButtonEvent,
         },
         renderer::{
             element::{
@@ -17,7 +16,7 @@ use smithay::{
         },
         winit::{self, WinitEvent},
     },
-    desktop::{Window, layer_map_for_output, space::render_output},
+    desktop::{Window, WindowSurfaceType, layer_map_for_output, space::render_output},
     input::{
         keyboard::FilterResult,
         pointer::{ButtonEvent, MotionEvent, PointerHandle},
@@ -26,7 +25,6 @@ use smithay::{
     reexports::{
         calloop::{EventLoop, Interest, Mode as LoopMode, PostAction, generic::Generic},
         wayland_server::Display,
-        winit::event_loop::pump_events::PumpStatus,
         wayland_protocols_misc::server_decoration::server::org_kde_kwin_server_decoration_manager::Mode as SsdMode,
     },
     utils::{IsAlive, Logical, Physical, Point, Size, Transform},
@@ -44,10 +42,14 @@ use crate::state::{AtlasState, ClientState, GrabState, GrabKind};
 const PAN_SPEED: f64 = 50.0;
 const MOD_KEY_EVDEV: i32 = 125;
 const KEY_ENTER: i32 = 28;
+const KEY_U: i32 = 22;
 const KEY_Q: i32 = 16;
 const BTN_LEFT: u32 = 0x110;
 const BTN_RIGHT: u32 = 0x111;
 const MIN_WIN_SIZE: f64 = 100.0;
+const ZOOM_FACTOR: f64 = 1.15;
+const MIN_ZOOM: f64 = 0.05;
+const MAX_ZOOM: f64 = 20.0;
 
 /// ── Spatial helpers ──────────────────────────────────────────────
 
@@ -55,6 +57,16 @@ pub fn sync_space_with_viewport(
     state: &mut AtlasState,
     screen_size: smithay::utils::Size<i32, smithay::utils::Physical>,
 ) {
+    // Set the output's fractional scale so render_output scales everything by zoom.
+    use smithay::output::Scale;
+    state.output.change_current_state(None, None, Some(Scale::Fractional(state.viewport.zoom)), None);
+
+    // Position the output so that (viewport.x, viewport.y) in canvas
+    // maps to the top-left of the screen. Elements at canvas coordinates
+    // will then be rendered at (canvas − viewport) * zoom by render_output.
+    let output_pos = Point::from((state.viewport.x as i32, state.viewport.y as i32));
+    state.space.map_output(&state.output, output_pos);
+
     let gs_size = GsSize::new(screen_size.w as f64, screen_size.h as f64);
     let visible = state
         .global_space
@@ -62,11 +74,10 @@ pub fn sync_space_with_viewport(
 
     let mut mapped: Vec<u64> = Vec::with_capacity(visible.len());
 
-    for (gid, screen_pos, _) in &visible {
-        let sp = smithay::utils::Point::from((
-            screen_pos.x as i32,
-            screen_pos.y as i32,
-        ));
+    for (gid, _, _) in &visible {
+        // Canvas-coordinate position (no zoom multiplication)
+        let canvas = state.global_space.window_position(*gid).unwrap_or(GsPoint::new(0.0, 0.0));
+        let sp = Point::from((canvas.x as i32, canvas.y as i32));
         if let Some(window) = state.windows.get(gid) {
             if state.space.element_geometry(window).is_some() {
                 state.space.relocate_element(window, sp);
@@ -122,6 +133,9 @@ pub fn build_border_elements(
     let border = state.config.decoration.border_width;
     let focused = hex_to_color32f(&state.config.decoration.active_color);
     let unfocused = hex_to_color32f(&state.config.decoration.inactive_color);
+    let zoom = state.viewport.zoom;
+    let vpx = state.viewport.x;
+    let vpy = state.viewport.y;
 
     for (gid, window) in &state.windows {
         if let Some(geo) = state.space.element_geometry(window) {
@@ -130,37 +144,41 @@ pub fn build_border_elements(
             } else {
                 unfocused
             };
-            let (x, y, w, h) = (
-                geo.loc.x as f64,
-                geo.loc.y as f64,
-                geo.size.w as f64,
-                geo.size.h as f64,
-            );
+            // geo is in CANVAS coordinates — convert to screen
+            let cx = geo.loc.x as f64;
+            let cy = geo.loc.y as f64;
+            let cw = geo.size.w as f64;
+            let ch = geo.size.h as f64;
 
-            let bw = w + 2.0 * border;
+            let sx = (cx - vpx) * zoom;
+            let sy = (cy - vpy) * zoom;
+            let sw = cw * zoom;
+            let sh = ch * zoom;
+
+            let bw = sw + 2.0 * border;
 
             // top
             let mut buf = SolidColorBuffer::new((bw as i32, border as i32), color);
             elements.push(SolidColorRenderElement::from_buffer(
-                &buf, Point::from(((x - border) as i32, (y - border) as i32)),
+                &buf, Point::from(((sx - border) as i32, (sy - border) as i32)),
                 1.0, 1.0, Kind::Unspecified,
             ));
             // bottom
             buf = SolidColorBuffer::new((bw as i32, border as i32), color);
             elements.push(SolidColorRenderElement::from_buffer(
-                &buf, Point::from(((x - border) as i32, (y + h) as i32)),
+                &buf, Point::from(((sx - border) as i32, (sy + sh) as i32)),
                 1.0, 1.0, Kind::Unspecified,
             ));
             // left
-            buf = SolidColorBuffer::new((border as i32, h as i32), color);
+            buf = SolidColorBuffer::new((border as i32, sh as i32), color);
             elements.push(SolidColorRenderElement::from_buffer(
-                &buf, Point::from(((x - border) as i32, y as i32)),
+                &buf, Point::from(((sx - border) as i32, sy as i32)),
                 1.0, 1.0, Kind::Unspecified,
             ));
             // right
-            buf = SolidColorBuffer::new((border as i32, h as i32), color);
+            buf = SolidColorBuffer::new((border as i32, sh as i32), color);
             elements.push(SolidColorRenderElement::from_buffer(
-                &buf, Point::from(((x + w) as i32, y as i32)),
+                &buf, Point::from(((sx + sw) as i32, sy as i32)),
                 1.0, 1.0, Kind::Unspecified,
             ));
         }
@@ -186,9 +204,8 @@ pub fn prune_layer_surfaces(state: &mut AtlasState) {
 
 /// ── Keyboard ─────────────────────────────────────────────────────
 
-pub fn spawn_terminal() {
-    let wl_display = std::env::var("WAYLAND_DISPLAY").ok();
-    for cmd in &["fish", "alacritty", "kitty", "foot", "gnome-terminal", "weston-terminal"] {
+pub fn spawn_terminal(socket_name: &str) {
+    for cmd in &["kitty", "alacritty", "foot", "gnome-terminal", "weston-terminal"] {
         if std::process::Command::new("which")
             .arg(cmd)
             .stdout(std::process::Stdio::null())
@@ -198,18 +215,19 @@ pub fn spawn_terminal() {
             .unwrap_or(false)
         {
             let mut child = std::process::Command::new(cmd);
-            if let Some(ref display) = wl_display {
-                child.env("WAYLAND_DISPLAY", display);
+            child.env("WAYLAND_DISPLAY", socket_name);
+            match child.spawn() {
+                Ok(_) => { info!("Spawned terminal: {}", cmd); return; }
+                Err(e) => { warn!("Failed to spawn {}: {}", cmd, e); }
             }
-            let _ = child.spawn().map(|_| info!("Spawned terminal: {}", cmd));
-            return;
         }
     }
     let mut child = std::process::Command::new("xterm");
-    if let Some(ref display) = wl_display {
-        child.env("WAYLAND_DISPLAY", display);
+    child.env("WAYLAND_DISPLAY", socket_name);
+    match child.spawn() {
+        Ok(_) => info!("Spawned xterm"),
+        Err(e) => warn!("Failed to spawn xterm: {}", e),
     }
-    let _ = child.spawn().map(|_| info!("Spawned xterm"));
 }
 
 pub fn handle_keyboard_event<B: InputBackend>(
@@ -228,7 +246,7 @@ pub fn handle_keyboard_event<B: InputBackend>(
     // ── Keybinds ─────────────────────────────────────────────────
     if pressed && state.mod_pressed {
         match evdev {
-            KEY_ENTER => { spawn_terminal(); return; }
+            KEY_ENTER | KEY_U => { spawn_terminal(&state.socket_name); return; }
             KEY_Q => {
                 if let Some(gid) = state.focused_gid {
                     if let Some(window) = state.windows.get(&gid) {
@@ -319,12 +337,27 @@ pub fn handle_motion_event(
         }
     }
 
-    let surface = state
+    // ── Canvas pan drag ──────────────────────────────────────────
+    if let Some(origin) = state.canvas_drag_origin {
+        let dx = phys.x - origin.x;
+        let dy = phys.y - origin.y;
+        state.viewport.x -= dx / state.viewport.zoom;
+        state.viewport.y -= dy / state.viewport.zoom;
+        state.canvas_drag_origin = Some(phys);
+        sync_space_with_viewport(state, state.screen_size);
+        state.space.refresh();
+        pointer.frame(state);
+        return;
+    }
+
+    let focus = state
         .space
         .element_under(logical)
-        .and_then(|(w, _)| surface_from_window(w));
-
-    let focus = surface.map(|s| (s, logical));
+        .and_then(|(w, loc)| {
+            let rel = logical - loc.to_f64();
+            w.surface_under(rel, WindowSurfaceType::ALL)
+                .map(|(s, surf_loc)| (s, (loc + surf_loc).to_f64()))
+        });
 
     state.serial_counter += 1;
     let serial = state.serial_counter;
@@ -348,12 +381,19 @@ pub fn handle_button_event(
     btn_state: ButtonState,
     serial: u32,
 ) {
+    // Keep Smithay space in sync with viewport before element_under checks
+    sync_space_with_viewport(state, state.screen_size);
+    state.space.refresh();
+
     let is_left = code == BTN_LEFT;
     let is_right = code == BTN_RIGHT;
 
     // ── Press (Mod+Click for drag/resize) ─────────────────────────
     if is_press && (is_left || is_right) && state.mod_pressed {
-        let logical = Point::<f64, Logical>::from((state.pointer_location.x, state.pointer_location.y));
+        let logical = Point::<f64, Logical>::from((
+            state.pointer_location.x / state.viewport.zoom + state.viewport.x,
+            state.pointer_location.y / state.viewport.zoom + state.viewport.y,
+        ));
         let hit = state.space.element_under(logical).and_then(|(w, _)| find_gid(state, w));
 
         if let Some(gid) = hit {
@@ -401,13 +441,38 @@ pub fn handle_button_event(
         state.grab = None;
     }
 
+    // ── Canvas pan (left click on empty space) ────────────────────
+    if is_press && is_left && !state.mod_pressed {
+        let logical = Point::<f64, Logical>::from((
+            state.pointer_location.x / state.viewport.zoom + state.viewport.x,
+            state.pointer_location.y / state.viewport.zoom + state.viewport.y,
+        ));
+        if state.space.element_under(logical).is_none() {
+            state.canvas_drag_origin = Some(state.pointer_location);
+        }
+    }
+
+    // ── Release ends canvas pan ───────────────────────────────────
+    if !is_press && is_left {
+        state.canvas_drag_origin = None;
+    }
+
     // ── Click-to-focus (plain left click) ─────────────────────────
     if is_press && is_left && !state.mod_pressed {
-        let logical = Point::<f64, Logical>::from((state.pointer_location.x, state.pointer_location.y));
-        if let Some((window, _loc)) = state.space.element_under(logical) {
+        let logical = Point::<f64, Logical>::from((
+            state.pointer_location.x / state.viewport.zoom + state.viewport.x,
+            state.pointer_location.y / state.viewport.zoom + state.viewport.y,
+        ));
+        if let Some((window, loc)) = state.space.element_under(logical) {
             let window_id = find_gid(state, window);
             state.focused_gid = window_id;
-            if let Some(surface) = surface_from_window(window) {
+            let rel = logical - loc.to_f64();
+            // Prefer the subsurface for keyboard focus (handles CSD click regions)
+            let focus_surface = window
+                .surface_under(rel, WindowSurfaceType::ALL)
+                .map(|(s, _)| s)
+                .or_else(|| surface_from_window(window));
+            if let Some(surface) = focus_surface {
                 keyboard.set_focus(state, Some(surface), smithay::utils::SERIAL_COUNTER.next_serial().into());
             }
             if let Some(gid) = window_id {
@@ -418,6 +483,22 @@ pub fn handle_button_event(
             }
         }
     }
+
+    // Re-evaluate pointer focus after space sync (pan may have moved windows)
+    let logical = Point::<f64, Logical>::from((
+        state.pointer_location.x / state.viewport.zoom + state.viewport.x,
+        state.pointer_location.y / state.viewport.zoom + state.viewport.y,
+    ));
+    let focus = state
+        .space
+        .element_under(logical)
+        .and_then(|(w, loc)| {
+            let rel = logical - loc.to_f64();
+            w.surface_under(rel, WindowSurfaceType::ALL)
+                .map(|(s, surf_loc)| (s, (loc + surf_loc).to_f64()))
+        });
+    state.serial_counter += 1;
+    pointer.motion(state, focus, &MotionEvent { location: logical, serial: state.serial_counter.into(), time: 0 });
 
     let button_event = ButtonEvent { serial: serial.into(), time: 0, button: code, state: btn_state };
     pointer.button(state, &button_event);
@@ -438,7 +519,7 @@ pub fn run_winit(config: RuntimeConfig) -> Result<(), Box<dyn std::error::Error>
     let data_device_state =
         smithay::wayland::selection::data_device::DataDeviceState::new::<AtlasState>(&dh);
 
-    let (mut backend, mut winit) = winit::init::<GlesRenderer>()?;
+    let (mut backend, winit) = winit::init::<GlesRenderer>()?;
 
     let size = backend.window_size();
     let output = Output::new(
@@ -469,7 +550,6 @@ pub fn run_winit(config: RuntimeConfig) -> Result<(), Box<dyn std::error::Error>
 
     let socket_source = ListeningSocketSource::new_auto()?;
     let socket_name = socket_source.socket_name().to_string_lossy().into_owned();
-    std::env::set_var("WAYLAND_DISPLAY", &socket_name);
     info!(name = socket_name, "Listening on wayland socket");
 
     event_loop.handle().insert_source(
@@ -513,17 +593,19 @@ pub fn run_winit(config: RuntimeConfig) -> Result<(), Box<dyn std::error::Error>
         global_space,
         viewport,
         windows: std::collections::HashMap::new(),
-        running: true,
         grab: None,
         pointer_location: Point::from((0.0f64, 0.0f64)),
         mod_pressed: false,
         ctrl_pressed: false,
         serial_counter: 0,
         focused_gid: None,
+        canvas_drag_origin: None,
+        screen_size: size,
         cursor_status: smithay::input::pointer::CursorImageStatus::default_named(),
         kde_decoration_state,
         layer_shell_state,
         layer_surfaces: Vec::new(),
+        popups: smithay::desktop::PopupManager::default(),
     };
 
     info!("Initialization completed, starting the main loop.");
@@ -534,111 +616,129 @@ pub fn run_winit(config: RuntimeConfig) -> Result<(), Box<dyn std::error::Error>
         .map_err(|e| format!("Failed to initialize keyboard: {}", e))?;
 
     let start_time = std::time::Instant::now();
-    let mut full_redraw: u8 = 4;
+    let loop_signal = event_loop.get_signal();
 
-    while state.running {
-        let status = winit.dispatch_new_events(|event| match event {
+    backend.window().request_redraw();
+
+    event_loop.handle().insert_source(winit, move |event, _, state| {
+        match event {
             WinitEvent::Resized { size, .. } => {
+                state.screen_size = size;
                 let mode = Mode { size, refresh: 60_000 };
                 state.output.change_current_state(Some(mode), None, None, None);
                 state.output.set_preferred(mode);
             }
-            WinitEvent::Input(event) => match event {
-                InputEvent::Keyboard { event } => {
-                    let evdev = event.key_code().raw() as i32 - 8;
-                    handle_keyboard_event(&mut state, &event, &keyboard, evdev);
+            WinitEvent::Input(event) => {
+                match event {
+                    InputEvent::Keyboard { event } => {
+                        let evdev = event.key_code().raw() as i32 - 8;
+                        handle_keyboard_event(state, &event, &keyboard, evdev);
+                    }
+                    InputEvent::PointerMotionAbsolute { event } => {
+                        let phys = Point::<f64, Physical>::from((event.x(), event.y()));
+                        let logical = Point::<f64, Logical>::from((
+                            phys.x / state.viewport.zoom + state.viewport.x,
+                            phys.y / state.viewport.zoom + state.viewport.y,
+                        ));
+                        handle_motion_event(state, &pointer, phys, logical);
+                    }
+                    InputEvent::PointerButton { event } => {
+                        state.serial_counter += 1;
+                        let serial = state.serial_counter;
+                        handle_button_event(
+                            state, &pointer, &keyboard,
+                            event.state() == ButtonState::Pressed,
+                            event.button_code(), event.state(), serial,
+                        );
+                    }
+                    InputEvent::PointerAxis { event } => {
+                        let dy = event.amount_v120(Axis::Vertical).unwrap_or(0.0);
+                        if dy != 0.0 {
+                            let cursor = state.pointer_location;
+                            let canvas_pt = screen_to_canvas(state, cursor);
+                            let old_zoom = state.viewport.zoom;
+                            let new_zoom = if dy > 0.0 {
+                                (old_zoom / ZOOM_FACTOR).max(MIN_ZOOM)
+                            } else {
+                                (old_zoom * ZOOM_FACTOR).min(MAX_ZOOM)
+                            };
+                            state.viewport.x = canvas_pt.x - cursor.x / new_zoom;
+                            state.viewport.y = canvas_pt.y - cursor.y / new_zoom;
+                            state.viewport.zoom = new_zoom;
+                            backend.window().request_redraw();
+                        }
+                    }
+                    _ => {},
                 }
-                InputEvent::PointerMotionAbsolute { event } => {
-                    let phys = Point::<f64, Physical>::from((event.x(), event.y()));
-                    let logical = Point::<f64, Logical>::from((phys.x, phys.y));
-                    handle_motion_event(&mut state, &pointer, phys, logical);
-                }
-                InputEvent::PointerButton { event } => {
-                    state.serial_counter += 1;
-                    let serial = state.serial_counter;
-                    handle_button_event(
-                        &mut state, &pointer, &keyboard,
-                        event.state() == ButtonState::Pressed,
-                        event.button_code(), event.state(), serial,
+            }
+            WinitEvent::Redraw => {
+                state.screen_size = backend.window_size();
+                sync_space_with_viewport(state, state.screen_size);
+                state.space.refresh();
+                prune_layer_surfaces(state);
+
+                let border_elements = build_border_elements(state);
+                let age = backend.buffer_age().unwrap_or(0);
+
+                let (damage_to_submit, frame_time) = {
+                    let (renderer, mut framebuffer) = match backend.bind() {
+                        Ok(ret) => ret,
+                        Err(err) => { error!("Failed to bind renderer: {}", err); return; }
+                    };
+                    let result = render_output(
+                        &state.output,
+                        renderer,
+                        &mut framebuffer,
+                        1.0,
+                        age,
+                        std::slice::from_ref(&state.space),
+                        &border_elements,
+                        &mut state.damage_tracker,
+                        hex_to_color32f(&state.config.canvas.background_color),
                     );
+                    let frame_time = start_time.elapsed();
+                    match result {
+                        Ok(r) => (r.damage.cloned(), frame_time),
+                        Err(err) => { warn!("Rendering error: {:?}", err); (None, frame_time) }
+                    }
+                };
+
+                if let Some(ref damage) = damage_to_submit {
+                    if !damage.is_empty() {
+                        if let Err(err) = backend.submit(Some(damage)) {
+                            warn!("Failed to submit buffer: {}", err);
+                        }
+                    }
                 }
-                _ => {}
-            },
+
+                let output_for_frames = state.output.clone();
+                for window in state.space.elements() {
+                    if state.space.outputs_for_element(window).contains(&output_for_frames) {
+                        window.send_frame(
+                            &output_for_frames,
+                            frame_time,
+                            None,
+                            |_, _| Some(output_for_frames.clone()),
+                        );
+                    }
+                }
+
+                if let Err(err) = state.display_handle.flush_clients() {
+                    warn!("Failed to flush clients: {:?}", err);
+                }
+
+                backend.window().request_redraw();
+            }
+            WinitEvent::CloseRequested => {
+                loop_signal.stop();
+            }
             _ => (),
-        });
-
-        match status {
-            PumpStatus::Continue => (),
-            PumpStatus::Exit(_) => { state.running = false; break; }
         }
+    })?;
 
-        // ── Spatial sync ──────────────────────────────────────────
-        let screen_size = backend.window_size();
-        sync_space_with_viewport(&mut state, screen_size);
-        state.space.refresh();
-        prune_layer_surfaces(&mut state);
+    event_loop.run(None, &mut state, |_| {})?;
 
-        // ── Build border elements ──────────────────────────────────
-        let border_elements = build_border_elements(&state);
-
-        let age = if full_redraw > 0 { full_redraw -= 1; 0 } else { backend.buffer_age().unwrap_or(0) };
-
-        // ── Render ────────────────────────────────────────────────
-        let (damage_to_submit, frame_time) = {
-            let (renderer, mut framebuffer) = match backend.bind() {
-                Ok(ret) => ret,
-                Err(err) => { error!("Failed to bind renderer: {}", err); break; }
-            };
-
-            // render_output automatically handles LayerMap layer surfaces
-            // via space_render_elements (anchored to output, not affected by viewport).
-            let result = render_output(
-                &state.output,
-                renderer,
-                &mut framebuffer,
-                1.0,
-                age,
-                std::slice::from_ref(&state.space),
-                &border_elements,
-                &mut state.damage_tracker,
-                hex_to_color32f(&state.config.canvas.background_color),
-            );
-
-            let frame_time = start_time.elapsed();
-            match result {
-                Ok(r) => (r.damage.cloned(), frame_time),
-                Err(err) => { warn!("Rendering error: {:?}", err); (None, frame_time) }
-            }
-        };
-
-        if let Some(ref damage) = damage_to_submit {
-            if !damage.is_empty() {
-                if let Err(err) = backend.submit(Some(damage)) {
-                    warn!("Failed to submit buffer: {}", err);
-                }
-            }
-        }
-
-        let output_for_frames = state.output.clone();
-        for window in state.space.elements() {
-            if state.space.outputs_for_element(window).contains(&output_for_frames) {
-                window.send_frame(
-                    &output_for_frames, frame_time, None,
-                    |_, _| Some(output_for_frames.clone()),
-                );
-            }
-        }
-
-        let result = event_loop.dispatch(Some(Duration::from_millis(1)), &mut state);
-        if result.is_err() {
-            error!("Event loop dispatch error");
-            state.running = false;
-            break;
-        }
-        if let Err(err) = state.display_handle.flush_clients() {
-            warn!("Failed to flush clients: {:?}", err);
-        }
-    }
+    info!("Winit backend shutting down");
 
     Ok(())
 }
