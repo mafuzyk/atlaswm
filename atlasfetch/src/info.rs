@@ -204,10 +204,12 @@ fn read_cpu() -> String {
         return "unknown".into();
     }
 
-    // Simplify CPU name: remove "CPU" and frequency suffix for brevity
+    // Simplify CPU name: remove trademark symbols, "CPU" suffix, @ speed
     let simplified = model
         .replace("(R)", "")
         .replace("(TM)", "")
+        .replace("(r)", "")
+        .replace("(tm)", "")
         .replace(" CPU", "");
 
     // Remove trailing @ speed
@@ -218,11 +220,52 @@ fn read_cpu() -> String {
         .trim()
         .to_string();
 
+    let shortened = shorten_cpu(&simplified);
+
     if cores > 1 {
-        format!("{} ({} cores)", simplified, cores)
+        format!("{} ({} cores)", shortened, cores)
     } else {
-        simplified
+        shortened
     }
+}
+
+/// Shorten a CPU name to its meaningful model identifier.
+/// Removes verbose suffixes like "with ...", "N-Core Processor", etc.
+fn shorten_cpu(name: &str) -> String {
+    let name = name.trim();
+
+    // Strip " with ..." (e.g., "AMD Ryzen 3 2200G with Radeon Vega Graphics")
+    if let Some(pos) = name.find(" with ") {
+        return name[..pos].trim().to_string();
+    }
+
+    // Strip trailing "N-Core Processor", "N-Core APU", or just "N-Core"
+    // e.g., "AMD Ryzen 5 5600X 6-Core Processor" → "AMD Ryzen 5 5600X"
+    let re1 = regex::Regex::new(r"\s+\d+-Core(?:\s+Processor|\s+APU)?$").unwrap();
+    let name = re1.replace(name, "");
+
+    // Strip trailing " Processor" or " APU" (left after Core removal)
+    let name = regex::Regex::new(r"\s+(?:Processor|APU)$")
+        .unwrap()
+        .replace(&name, "");
+
+    name.trim().to_string()
+}
+
+/// Shorten a GPU name to its meaningful model identifier.
+fn shorten_gpu(name: &str) -> String {
+    let name = name.trim();
+
+    // NVIDIA: "NVIDIA GeForce RTX 3060" → "NVIDIA RTX 3060"
+    let name = name.replace("GeForce ", "");
+    // AMD: "AMD Radeon RX 570 Series" → "AMD RX 570"
+    let name = name.replace("Radeon ", "");
+    // Strip trailing " Series", " Graphics"
+    let name = regex::Regex::new(r"\s+(?:Series|Graphics)$")
+        .unwrap()
+        .replace(&name, "");
+
+    name.trim().to_string()
 }
 
 // ── GPU ──────────────────────────────────────────────────────────────────
@@ -249,12 +292,18 @@ fn read_gpu() -> String {
                         vendor = v.to_string();
                     }
                     if vendor == "amdgpu" {
-                        return "AMD Radeon".into();
+                        // Try product_name first (newer kernels)
+                        let gpu_name = fs::read_to_string(dev_path.join("product_name"))
+                            .ok()
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .unwrap_or_else(|| "AMD Radeon".into());
+                        return shorten_gpu(&gpu_name);
                     }
                     if vendor == "nvidia" {
                         // Try to get the model name
                         if let Ok(model) = fs::read_to_string(dev_path.join("model")) {
-                            return model.trim().to_string();
+                            return shorten_gpu(model.trim());
                         }
                         return "NVIDIA".into();
                     }
@@ -575,4 +624,36 @@ fn get_addr_for_iface(name: &str) -> Result<String> {
         // Skip this for simplicity — returns empty, user can add later
     }
     Ok(String::new())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_shorten_cpu() {
+        let cases = vec![
+            ("AMD Ryzen 3 2200G with Radeon Vega Graphics", "AMD Ryzen 3 2200G"),
+            ("AMD Ryzen 5 5600X 6-Core Processor", "AMD Ryzen 5 5600X"),
+            ("AMD Ryzen 7 5800X3D", "AMD Ryzen 7 5800X3D"),
+            ("AMD EPYC 7551P 32-Core Processor", "AMD EPYC 7551P"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(shorten_cpu(input), expected, "CPU: {}", input);
+        }
+    }
+
+    #[test]
+    fn test_shorten_gpu() {
+        let cases = vec![
+            ("NVIDIA GeForce RTX 3060", "NVIDIA RTX 3060"),
+            ("NVIDIA GeForce GTX 1060 6GB", "NVIDIA GTX 1060 6GB"),
+            ("AMD Radeon RX 570 Series", "AMD RX 570"),
+            ("AMD Radeon RX 7800 XT", "AMD RX 7800 XT"),
+            ("Intel UHD Graphics 630", "Intel UHD Graphics 630"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(shorten_gpu(input), expected, "GPU: {}", input);
+        }
+    }
 }
