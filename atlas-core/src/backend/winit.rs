@@ -205,7 +205,7 @@ pub fn prune_layer_surfaces(state: &mut AtlasState) {
 /// ── Keyboard ─────────────────────────────────────────────────────
 
 pub fn spawn_terminal(socket_name: &str) {
-    for cmd in &["kitty", "alacritty", "foot", "gnome-terminal", "weston-terminal"] {
+    for cmd in &["comet", "kitty", "alacritty", "foot", "gnome-terminal", "wezterm", "weston-terminal"] {
         if std::process::Command::new("which")
             .arg(cmd)
             .stdout(std::process::Stdio::null())

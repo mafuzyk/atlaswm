@@ -91,10 +91,53 @@ sudo pacman -S base-devel pkgconf wayland wayland-protocols libxkbcommon \
 
 ---
 
+## Tools
+
+Atlas comes with companion tools that share the `~/.config/atlas/` directory for unified configuration:
+
+### ☄️ Comet Terminal
+
+A modern, GPU-accelerated terminal emulator — the default terminal for Atlas.
+
+```
+nix run github:mafuzyk/comet-terminal
+cargo install --git https://github.com/mafuzyk/comet-terminal
+```
+
+- WGPU rendering with damage tracking and LRU glyph cache
+- OSC 8 hyperlinks, OSC 52 clipboard, and visual bell
+- Mochi Galaxy theme (deep space palette)
+- Config: `~/.config/atlas/comet/config.toml`
+
+[github.com/mafuzyk/comet-terminal](https://github.com/mafuzyk/comet-terminal)
+
+### 🔭 atlasfetch
+
+A fetch tool designed to match the Atlas aesthetic — centered ASCII art with powerline panels, 25 color presets, and a TUI configurator.
+
+```bash
+./atlasfetch/atlasfetch          # run directly (Python)
+```
+
+- Config: `~/.config/atlas/atlasfetch/config.toml`
+
+[github.com/mafuzyk/atlasfetch](https://github.com/mafuzyk/atlasfetch)
+
+---
+
 ## Configuration
 
-The compositor loads `atlas.kdl` from the current working directory during development (`./atlas.kdl`).  
-For system‑wide deployment the planned default path is `~/.config/atlas/atlas.kdl`.
+The compositor loads `atlas.kdl` from:
+1. `~/.config/atlas/atlas.kdl` (system-wide)
+2. `./atlas.kdl` (cwd fallback during development)
+
+All Atlas tools share the `~/.config/atlas/` base directory:
+
+| Tool | Config path |
+|------|-------------|
+| **AtlasWM** | `~/.config/atlas/atlas.kdl` |
+| **Comet** | `~/.config/atlas/comet/config.toml` |
+| **atlasfetch** | `~/.config/atlas/atlasfetch/` |
 
 ### Full example
 
@@ -148,7 +191,7 @@ The `decoration` block controls the client‑side decoration borders rendered by
 
 | Input | Action |
 |-------|--------|
-| **Mod+Enter** | Spawn terminal (fish, gnome-terminal, alacritty, kitty, foot, weston-terminal, xterm) |
+| **Mod+Enter** | Spawn terminal — searches for **Comet** ☄️, then kitty, alacritty, foot, gnome-terminal, wezterm, weston-terminal, xterm |
 | **Mod+Q** | Close focused window |
 | **Mod+Left‑Click** | Drag window |
 | **Mod+Right‑Click** | Resize window |
@@ -200,16 +243,6 @@ The **Mod** key is the **Super / Windows** key (evdev 125).
 | `atlas-plugin-api` | 📋 Planned | Shared WIT types for WASM plugins |
 | `atlas-plugin` | 📋 Planned | WASM runtime (wasmtime) |
 | `atlas-ipc` | 📋 Planned | JSON‑over‑Unix‑socket IPC protocol |
-
----
-
-## atlasfetch
-
-A companion fetch tool designed to match the atlasWM aesthetic — centered ASCII art with powerline panels, 25 color presets, and a TUI configurator with live preview.
-
-<p style="margin-left: 2em;">
-<a href="https://github.com/mafuzyk/atlasfetch">github.com/mafuzyk/atlasfetch</a>
-</p>
 
 ---
 
